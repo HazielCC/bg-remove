@@ -1,0 +1,93 @@
+{
+    "image_created": {
+        "columns": [
+            {
+                "name": "id",
+                "type": "SERIAL",
+                "constraints": ["PRIMARY KEY"]
+            },
+            {
+                "name": "user_id",
+                "type": "INTEGER",
+                "constraints": ["NOT NULL"]
+            },
+            {
+                "name": "image_url",
+                "type": "TEXT",
+                "constraints": ["NOT NULL"]
+            },
+            {
+                "name": "image_pathname",
+                "type": "VARCHAR(500)",
+                "constraints": ["NOT NULL"]
+            },
+            {
+                "name": "prompt",
+                "type": "TEXT"
+            },
+            {
+                "name": "image_type",
+                "type": "VARCHAR(50)",
+                "default": "generated"
+            },
+            {
+                "name": "width",
+                "type": "INTEGER"
+            },
+            {
+                "name": "height",
+                "type": "INTEGER"
+            },
+            {
+                "name": "file_size",
+                "type": "BIGINT"
+            },
+            {
+                "name": "created_at",
+                "type": "TIMESTAMP",
+                "default": "CURRENT_TIMESTAMP"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "unique_user_created_image",
+                "type": "UNIQUE",
+                "columns": ["user_id", "image_url"]
+            },
+            {
+                "name": "user_created_images_pkey",
+                "type": "PRIMARY KEY",
+                "columns": ["id"]
+            }
+        ],
+        "indexes": [
+            {
+                "name": "idx_user_created_images_created_at",
+                "using": "BTREE",
+                "columns": ["created_at"]
+            },
+            {
+                "name": "idx_user_created_images_type",
+                "using": "BTREE",
+                "columns": ["image_type"]
+            },
+            {
+                "name": "idx_user_created_images_user_id",
+                "using": "BTREE",
+                "columns": ["user_id"],
+                "unique": true
+            },
+            {
+                "name": "unique_user_created_image",
+                "using": "BTREE",
+                "columns": ["user_id", "image_url"],
+                "unique": true
+            },
+            {
+                "name": "user_created_images_pkey",
+                "using": "BTREE",
+                "columns": ["id"]
+            }
+        ]
+    }
+}
