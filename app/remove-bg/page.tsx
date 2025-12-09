@@ -1,23 +1,37 @@
 "use client";
 
+import { RawImage } from '@huggingface/transformers';
 import { useState } from 'react';
 import { createSegmenter } from './modnet-client';
 
 export default function RemoveBgPage() {
-  const [imageUrl, setImageUrl] = useState('/example/person.jpg');
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [maskUrl, setMaskUrl] = useState<string | null>(null);
   const [variant, setVariant] = useState<'auto'|'fp32'|'fp16'|'uint8'>('auto');
   const [detectedDtype, setDetectedDtype] = useState<string | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
 
   async function onRun() {
-    if (!imageUrl) return;
+    if (!file) {
+        alert('Debes subir un archivo de imagen antes de ejecutar el modelo');
+        setLoading(false);
+        return;
+    }
     setLoading(true);
     try {
       const { segmenter, dtype } = await createSegmenter({ variant });
       setDetectedDtype(dtype);
-      const output = await segmenter(imageUrl);
+      let output;
+      if (file) {
+        // If user uploaded a file, use RawImage.fromBlob(file) so pipeline receives bytes directly
+        const raw = await RawImage.fromBlob(file);
+        output = await segmenter(raw);
+      } else {
+        alert('No image selected');
+        return;
+      }
       // output[0] exposes `save` in transformers.js runtime to download to file, but
       // here we try to use `toBlob` if available.
       const result = output[0];
@@ -42,16 +56,7 @@ export default function RemoveBgPage() {
   return (
     <main className="p-6">
       <h1 className="text-2xl font-bold">Demo Remove BG (MODNet)</h1>
-      <p className="mt-2">Pega la URL de una imagen (person portrait recomendado) y pulsa Run.</p>
-
-      <div className="mt-4">
-        <input
-          className="border p-2 w-full"
-          placeholder="https://.../photo.jpg"
-          value={imageUrl}
-          onChange={(e) => setImageUrl(e.target.value)}
-        />
-      </div>
+      <p className="mt-2">Sube un archivo de imagen (portrait recomendado) y pulsa Run.</p>
 
       <div className="mt-3">
         <label className="block mb-2">Or upload an image</label>
@@ -64,8 +69,14 @@ export default function RemoveBgPage() {
             const url = URL.createObjectURL(f);
             setFileUrl(url);
             setImageUrl(url);
+            setFile(f);
           }}
         />
+        {fileUrl && (
+          <div className="mt-3">
+            <img src={fileUrl} className="max-w-xs border" alt="preview" />
+          </div>
+        )}
       </div>
 
       <div className="mt-3">
@@ -82,7 +93,7 @@ export default function RemoveBgPage() {
         <button
           className="bg-blue-600 text-white px-4 py-2 rounded"
           onClick={onRun}
-          disabled={loading}
+          disabled={loading || !file}
         >
           {loading ? 'Running...' : 'Run'}
         </button>

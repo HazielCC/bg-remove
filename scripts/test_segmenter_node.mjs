@@ -1,6 +1,5 @@
-import fs from 'fs';
-import path from 'path';
 import { pipeline, RawImage } from '@huggingface/transformers';
+import path from 'path';
 
 async function run() {
   const modelPath = path.resolve('./public/models/modnet');
