@@ -22,6 +22,21 @@ interface HFDataset {
     tags: string[];
 }
 
+interface SuggestedDataset {
+    id: string;
+    description: string;
+    downloads: number;
+    format: string;
+    recommended: boolean;
+}
+
+interface ValidationResult {
+    valid: boolean;
+    file_count: number;
+    data_format: string | null;
+    message: string;
+}
+
 interface Sample {
     filename: string;
     image: string;
@@ -59,9 +74,12 @@ export default function DatasetsPage() {
     const [localDatasets, setLocalDatasets] = useState<DatasetInfo[]>([]);
     const [searchQuery, setSearchQuery] = useState("matting human");
     const [searchResults, setSearchResults] = useState<HFDataset[]>([]);
+    const [suggestedDatasets, setSuggestedDatasets] = useState<SuggestedDataset[]>([]);
     const [loading, setLoading] = useState(false);
     const [downloading, setDownloading] = useState<string | null>(null);
     const [downloadMax, setDownloadMax] = useState<number>(500);
+    const [downloadError, setDownloadError] = useState<string | null>(null);
+    const [validating, setValidating] = useState<string | null>(null);
 
     // Preview / stats
     const [previewId, setPreviewId] = useState<string | null>(null);
@@ -80,6 +98,10 @@ export default function DatasetsPage() {
 
     useEffect(() => {
         fetchLocal();
+        // Fetch suggested datasets
+        apiFetch<SuggestedDataset[]>("/datasets/suggested")
+            .then(setSuggestedDatasets)
+            .catch(console.error);
     }, [fetchLocal]);
 
     // ── Search HF ─────────────────────────────────────────
@@ -99,9 +121,27 @@ export default function DatasetsPage() {
 
     // ── Download ──────────────────────────────────────────
     const handleDownload = async (datasetName: string) => {
+        setDownloadError(null);
+        // Step 1: validate
+        setValidating(datasetName);
+        try {
+            const check = await apiPost<ValidationResult>("/datasets/validate", {
+                dataset_name: datasetName,
+            });
+            if (!check.valid) {
+                setDownloadError(check.message);
+                setValidating(null);
+                return;
+            }
+        } catch {
+            // If validation endpoint not available, proceed anyway
+        }
+        setValidating(null);
+
+        // Step 2: download
         setDownloading(datasetName);
         try {
-            const result = await apiPost<{ status: string; images_count?: number }>(
+            const result = await apiPost<{ status: string; images_count?: number; alphas_count?: number; detail?: string }>(
                 "/datasets/download",
                 {
                     dataset_name: datasetName,
@@ -109,14 +149,16 @@ export default function DatasetsPage() {
                     max_samples: downloadMax || null,
                 }
             );
-            alert(
-                result.status === "already_exists"
-                    ? "Dataset already exists locally."
-                    : `Downloaded ${result.images_count} images.`
-            );
+            if (result.status === "already_exists") {
+                setDownloadError("El dataset ya existe localmente. Elimínalo primero para re-descargarlo.");
+            } else {
+                setDownloadError(null);
+                alert(`Descargadas ${result.images_count ?? 0} imágenes y ${result.alphas_count ?? 0} alphas.`);
+            }
             fetchLocal();
-        } catch (e) {
-            alert("Download error: " + (e as Error).message);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setDownloadError(msg);
         } finally {
             setDownloading(null);
         }
@@ -183,26 +225,94 @@ export default function DatasetsPage() {
                 <button
                     onClick={() => setTab("local")}
                     className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "local"
-                            ? "bg-blue-600 text-white"
-                            : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
+                        ? "bg-blue-600 text-white"
+                        : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
                         }`}
                 >
-                    Local Datasets ({localDatasets.length})
+                    Datasets Locales ({localDatasets.length})
                 </button>
                 <button
                     onClick={() => setTab("search")}
                     className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${tab === "search"
-                            ? "bg-blue-600 text-white"
-                            : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
+                        ? "bg-blue-600 text-white"
+                        : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
                         }`}
                 >
-                    Search HuggingFace
+                    Buscar en HuggingFace
                 </button>
             </div>
 
             {/* ── Search Tab ───────────────────────────────── */}
             {tab === "search" && (
                 <div className="space-y-4">
+                    {/* Suggested datasets */}
+                    {suggestedDatasets.length > 0 && (
+                        <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                            <h3 className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-2">
+                                📦 Datasets recomendados (verificados)
+                            </h3>
+                            <div className="space-y-2">
+                                {suggestedDatasets.map((ds) => (
+                                    <div
+                                        key={ds.id}
+                                        className="flex items-center justify-between bg-white dark:bg-neutral-900 rounded-lg px-3 py-2 border border-blue-100 dark:border-blue-900"
+                                    >
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2">
+                                                <a
+                                                    href={`https://huggingface.co/datasets/${ds.id}`}
+                                                    target="_blank"
+                                                    rel="noopener"
+                                                    className="text-sm font-medium text-blue-600 hover:underline"
+                                                >
+                                                    {ds.id}
+                                                </a>
+                                                {ds.recommended && (
+                                                    <span className="text-[10px] px-1.5 py-0.5 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-full">
+                                                        Recomendado
+                                                    </span>
+                                                )}
+                                                <span className="text-[10px] px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded">
+                                                    {ds.format}
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-neutral-500 mt-0.5">
+                                                {ds.description}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => handleDownload(ds.id)}
+                                            disabled={downloading === ds.id || validating === ds.id}
+                                            className="bg-green-600 text-white px-3 py-1 rounded text-xs disabled:opacity-50 ml-3"
+                                        >
+                                            {validating === ds.id
+                                                ? "Validando..."
+                                                : downloading === ds.id
+                                                    ? "Descargando..."
+                                                    : "Descargar"}
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Error banner */}
+                    {downloadError && (
+                        <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg p-3 flex items-start gap-2">
+                            <span className="text-red-500 text-lg leading-none">⚠</span>
+                            <div className="flex-1">
+                                <p className="text-sm text-red-700 dark:text-red-300">{downloadError}</p>
+                            </div>
+                            <button
+                                onClick={() => setDownloadError(null)}
+                                className="text-red-400 hover:text-red-600 text-xs"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
+
                     <div className="flex gap-2">
                         <input
                             type="text"
@@ -278,12 +388,14 @@ export default function DatasetsPage() {
                                             <td className="p-3 text-right">
                                                 <button
                                                     onClick={() => handleDownload(ds.id)}
-                                                    disabled={downloading === ds.id}
+                                                    disabled={downloading === ds.id || validating === ds.id}
                                                     className="bg-green-600 text-white px-3 py-1 rounded text-xs disabled:opacity-50"
                                                 >
-                                                    {downloading === ds.id
-                                                        ? "Downloading..."
-                                                        : "Download"}
+                                                    {validating === ds.id
+                                                        ? "Validando..."
+                                                        : downloading === ds.id
+                                                            ? "Descargando..."
+                                                            : "Descargar"}
                                                 </button>
                                             </td>
                                         </tr>
@@ -300,9 +412,11 @@ export default function DatasetsPage() {
                 <div className="space-y-4">
                     {localDatasets.length === 0 ? (
                         <div className="text-center py-12 text-neutral-400">
-                            <p className="text-lg mb-2">No datasets downloaded yet</p>
+                            <p className="text-lg mb-2">No hay datasets descargados</p>
                             <p className="text-sm">
-                                Switch to &quot;Search HuggingFace&quot; to find and download datasets
+                                Ve a &quot;Buscar en HuggingFace&quot; para buscar y descargar datasets.
+                                <br />
+                                Recomendamos empezar con <strong>Voxel51/DUTS</strong>.
                             </p>
                         </div>
                     ) : (
@@ -311,8 +425,8 @@ export default function DatasetsPage() {
                                 <div
                                     key={ds.id}
                                     className={`border rounded-lg p-4 transition-colors dark:border-neutral-700 ${previewId === ds.id
-                                            ? "border-blue-400 dark:border-blue-600"
-                                            : ""
+                                        ? "border-blue-400 dark:border-blue-600"
+                                        : ""
                                         }`}
                                 >
                                     <div className="flex items-start justify-between">

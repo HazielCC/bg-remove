@@ -3,6 +3,8 @@ Dataset management API.
 
 Endpoints:
   GET  /search        — search HuggingFace Hub
+  GET  /suggested     — list of known-good matting datasets
+  POST /validate      — check a dataset has actual data before downloading
   POST /download      — download dataset from HF
   GET  /local         — list locally downloaded datasets
   GET  /{id}/preview  — preview samples
@@ -25,15 +27,57 @@ router = APIRouter()
 
 # ── Schemas ──────────────────────────────────────────────
 class DownloadRequest(BaseModel):
-    dataset_name: str  # e.g. "fredguth/aisegmentcn-matting-human"
+    dataset_name: str  # e.g. "Voxel51/DUTS"
     split: str = "train"
     max_samples: int | None = None
+
+
+class ValidateRequest(BaseModel):
+    dataset_name: str
 
 
 class CurateRequest(BaseModel):
     min_resolution: int = 256
     check_alpha_range: bool = True
     remove_broken: bool = False
+
+
+# ── Suggested datasets (known to work) ───────────────────
+SUGGESTED_DATASETS = [
+    {
+        "id": "Voxel51/DUTS",
+        "description": "Salient object detection. ~15K images con máscaras binarias.",
+        "downloads": 2600,
+        "format": "image_repo",
+        "recommended": True,
+    },
+    {
+        "id": "chitradrishti/duts",
+        "description": "DUTS dataset alternativo, formato datasets estándar.",
+        "downloads": 8,
+        "format": "datasets",
+        "recommended": False,
+    },
+]
+
+
+@router.get("/suggested")
+async def get_suggested_datasets():
+    """Return a list of datasets known to work well for matting/segmentation."""
+    return SUGGESTED_DATASETS
+
+
+# ── Validate dataset before download ─────────────────────
+@router.post("/validate")
+async def validate_dataset(req: ValidateRequest):
+    """Check that a HuggingFace dataset has actual downloadable data."""
+    import asyncio
+    from ml.dataset import HFMattingDataset
+
+    def _validate():
+        return HFMattingDataset.validate_hf_repo(req.dataset_name, settings.hf_token)
+
+    return await asyncio.to_thread(_validate)
 
 
 # ── Search HuggingFace Hub ───────────────────────────────
@@ -101,8 +145,17 @@ async def download_dataset(req: DownloadRequest):
             "images_count": len(images),
             "alphas_count": len(alphas),
         }
+    except ValueError as e:
+        # Known validation errors — return 422 with descriptive message
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Clean up partial downloads on unexpected errors
+        if output_dir.exists():
+            shutil.rmtree(output_dir, ignore_errors=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error descargando «{req.dataset_name}»: {e}",
+        )
 
 
 # ── List local datasets ─────────────────────────────────
