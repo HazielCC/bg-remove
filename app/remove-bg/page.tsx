@@ -8,26 +8,33 @@ export default function RemoveBgPage() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [maskUrl, setMaskUrl] = useState<string | null>(null);
-  const [variant, setVariant] = useState<'auto'|'fp32'|'fp16'|'uint8'>('auto');
+  const [variant, setVariant] = useState<'auto' | 'fp32' | 'fp16' | 'uint8'>('auto');
   const [detectedDtype, setDetectedDtype] = useState<string | null>(null);
+  const [modelInfo, setModelInfo] = useState<{ modelId: string; dtype: string; loadTime: string; cached: boolean } | null>(null);
+  const [inferenceTime, setInferenceTime] = useState<string | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
 
   async function onRun() {
     if (!file) {
-        alert('Debes subir un archivo de imagen antes de ejecutar el modelo');
-        setLoading(false);
-        return;
+      alert('Debes subir un archivo de imagen antes de ejecutar el modelo');
+      setLoading(false);
+      return;
     }
     setLoading(true);
     try {
-      const { segmenter, dtype } = await createSegmenter({ variant });
+      const result_seg = await createSegmenter({ variant });
+      const { segmenter, dtype, modelId, loadTime, cached } = result_seg;
       setDetectedDtype(dtype);
+      setModelInfo({ modelId, dtype, loadTime: loadTime ?? '—', cached });
       let output;
       if (file) {
-        // If user uploaded a file, use RawImage.fromBlob(file) so pipeline receives bytes directly
         const raw = await RawImage.fromBlob(file);
+        const t0 = performance.now();
         output = await segmenter(raw);
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+        setInferenceTime(elapsed);
+        console.log(`[MODNet] 🖼️ Inference done in ${elapsed}s`);
       } else {
         alert('No image selected');
         return;
@@ -108,9 +115,14 @@ export default function RemoveBgPage() {
           </div>
         </div>
       )}
-        {detectedDtype && (
-          <div className="mt-4 text-sm text-gray-600">Model dtype used: {detectedDtype}</div>
-        )}
+      {modelInfo && (
+        <div className="mt-4 p-3 rounded bg-gray-800 text-sm text-gray-300 space-y-1">
+          <p><span className="text-gray-500">Modelo:</span> <span className="text-white font-mono">{modelInfo.modelId}</span></p>
+          <p><span className="text-gray-500">Dtype:</span> <span className="text-white font-mono">{modelInfo.dtype}</span></p>
+          <p><span className="text-gray-500">Carga:</span> {modelInfo.cached ? '♻️ cache' : `⬇️ ${modelInfo.loadTime}s`}</p>
+          {inferenceTime && <p><span className="text-gray-500">Inferencia:</span> <span className="text-white font-mono">{inferenceTime}s</span></p>}
+        </div>
+      )}
     </main>
   );
 }
