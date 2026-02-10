@@ -281,7 +281,7 @@ export default function MonitorPage() {
             {status && (
                 <div className="grid grid-cols-3 gap-3 mt-4">
                     <StatusCard label="Learning Rate" value={status.lr.toExponential(2)} />
-                    <StatusCard label="Best Val Loss" value={status.best_val_loss === Infinity ? "—" : status.best_val_loss.toFixed(4)} />
+                    <StatusCard label="Best Val Loss" value={status.best_val_loss != null && status.best_val_loss !== Infinity ? status.best_val_loss.toFixed(4) : "—"} />
                     <StatusCard label="Elapsed" value={formatTime(status.elapsed_seconds)} />
                 </div>
             )}
@@ -292,8 +292,8 @@ export default function MonitorPage() {
                     <h3 className="text-sm font-semibold">Console</h3>
                     <span
                         className={`text-xs px-2 py-0.5 rounded-full ${connected
-                                ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                                : "bg-neutral-100 text-neutral-500 dark:bg-neutral-700"
+                            ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                            : "bg-neutral-100 text-neutral-500 dark:bg-neutral-700"
                             }`}
                     >
                         {connected ? "Live" : "Disconnected"}
