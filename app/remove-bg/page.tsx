@@ -121,7 +121,7 @@ export default function RemoveBgPage() {
             </svg>
           </Link>
           <div>
-            <h1 className="text-lg font-semibold">Remove Background</h1>
+            <h1 className="text-lg font-semibold">Remover Fondo</h1>
             <p className="text-xs text-neutral-500">MODNet · Inferencia en navegador</p>
           </div>
         </div>
@@ -132,10 +132,10 @@ export default function RemoveBgPage() {
             value={variant}
             onChange={(e) => setVariant(e.target.value as any)}
           >
-            <option value="auto">Auto (quantized)</option>
+            <option value="auto">Auto (cuantizado)</option>
             <option value="fp32">FP32 (completo)</option>
             <option value="fp16">FP16 (medio)</option>
-            <option value="uint8">UINT8 (quantizado)</option>
+            <option value="uint8">UINT8 (cuantizado)</option>
           </select>
         </div>
       </header>
@@ -301,7 +301,7 @@ export default function RemoveBgPage() {
                   <span className="text-neutral-300 font-mono">{modelInfo.modelId}</span>
                 </span>
                 <span>
-                  <span className="text-neutral-600">Dtype</span>{' '}
+                  <span className="text-neutral-600">Tipo de dato</span>{' '}
                   <span className="text-neutral-300 font-mono">{modelInfo.dtype}</span>
                 </span>
                 <span>

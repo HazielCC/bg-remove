@@ -42,7 +42,7 @@ export default function ComparePage() {
     // ── Compare on dataset images ─────────────────────────
     const handleCompare = async () => {
         if (!modelA || !modelB) {
-            alert("Select both models");
+            alert("Selecciona ambos modelos");
             return;
         }
         setLoading(true);
@@ -54,7 +54,7 @@ export default function ComparePage() {
             });
             setResults(data.results);
         } catch (e) {
-            alert("Compare error: " + (e as Error).message);
+            alert("Error de comparación: " + (e as Error).message);
         } finally {
             setLoading(false);
         }
@@ -63,7 +63,7 @@ export default function ComparePage() {
     // ── Compare on custom image ───────────────────────────
     const handleCustomCompare = async () => {
         if (!customImage || !modelA || !modelB) {
-            alert("Upload an image and select both models");
+            alert("Sube una imagen y selecciona ambos modelos");
             return;
         }
         setLoading(true);
@@ -101,7 +101,7 @@ export default function ComparePage() {
 
     return (
         <div className="p-6 max-w-6xl">
-            <h1 className="text-2xl font-bold mb-1">Model Comparison</h1>
+            <h1 className="text-2xl font-bold mb-1">Comparación de Modelos</h1>
             <p className="text-sm text-neutral-500 mb-6">
                 Compare baseline vs fine-tuned models side by side
             </p>
@@ -109,13 +109,13 @@ export default function ComparePage() {
             {/* ── Model Selection ──────────────────────────── */}
             <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className="border rounded-lg p-4 dark:border-neutral-700">
-                    <h3 className="text-sm font-semibold mb-2">Model A (Baseline)</h3>
+                    <label className="block text-sm font-medium mb-1">Modelo B</label>
                     <select
-                        value={modelA}
-                        onChange={(e) => setModelA(e.target.value)}
+                        value={modelB}
+                        onChange={(e) => setModelB(e.target.value)}
                         className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
                     >
-                        <option value="">-- Select model --</option>
+                        <option value="">-- Seleccionar modelo --</option>
                         {checkpoints.map((m) => (
                             <option key={m.path} value={m.path}>
                                 {m.run ? `${m.run}/` : ""}
@@ -149,7 +149,7 @@ export default function ComparePage() {
                     disabled={loading || !modelA || !modelB}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
                 >
-                    {loading ? "Comparing..." : "Compare on Dataset"}
+                    {loading ? "Comparando..." : "Comparar en Dataset"}
                 </button>
 
                 <div className="flex items-center gap-2">
@@ -251,7 +251,7 @@ export default function ComparePage() {
                 <div className="text-center py-16 text-neutral-400">
                     <p className="text-lg mb-2">Select two models to compare</p>
                     <p className="text-sm">
-                        You can compare on dataset images or upload a custom image
+                        Puedes comparar en imágenes del dataset o subir una imagen personalizada
                     </p>
                 </div>
             )}

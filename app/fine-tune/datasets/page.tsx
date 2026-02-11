@@ -411,7 +411,7 @@ export default function DatasetsPage() {
             {tab === "local" && (
                 <div className="space-y-4">
                     {localDatasets.length === 0 ? (
-                        <div className="text-center py-12 text-neutral-400">
+                        <div className="text-center py-12 text-neutral-500 dark:text-neutral-400">
                             <p className="text-lg mb-2">No hay datasets descargados</p>
                             <p className="text-sm">
                                 Ve a &quot;Buscar en HuggingFace&quot; para buscar y descargar datasets.
@@ -524,7 +524,7 @@ export default function DatasetsPage() {
                                                     className="w-full aspect-square object-cover bg-black"
                                                 />
                                             ) : (
-                                                <div className="w-full aspect-square bg-neutral-200 dark:bg-neutral-800 flex items-center justify-center text-xs text-neutral-400">
+                                                <div className="w-full aspect-square bg-neutral-200 dark:bg-neutral-800 flex items-center justify-center text-xs text-neutral-500 dark:text-neutral-400">
                                                     No alpha
                                                 </div>
                                             )}

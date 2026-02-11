@@ -263,9 +263,9 @@ export default function ExportPage() {
 
                 {/* ── Available Models ────────────────────────── */}
                 <div className="border rounded-lg p-4 dark:border-neutral-700">
-                    <h3 className="text-sm font-semibold mb-3">All Models</h3>
+                    <h3 className="text-sm font-semibold mb-3">Todos los Modelos</h3>
                     {models.length === 0 ? (
-                        <p className="text-sm text-neutral-400">No models found</p>
+                        <p className="text-sm text-neutral-500 dark:text-neutral-400">No se encontraron modelos</p>
                     ) : (
                         <table className="w-full text-sm">
                             <thead>
@@ -286,10 +286,10 @@ export default function ExportPage() {
                                         <td className="py-2">
                                             <span
                                                 className={`text-xs px-2 py-0.5 rounded-full ${m.type === "onnx"
-                                                        ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-                                                        : m.type === "pretrained"
-                                                            ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400"
-                                                            : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600"
+                                                    ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+                                                    : m.type === "pretrained"
+                                                        ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400"
+                                                        : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600"
                                                     }`}
                                             >
                                                 {m.type}

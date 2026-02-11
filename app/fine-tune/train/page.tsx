@@ -81,9 +81,9 @@ export default function TrainPage() {
 
     return (
         <div className="p-6 max-w-3xl">
-            <h1 className="text-2xl font-bold mb-1">Training Configuration</h1>
-            <p className="text-sm text-neutral-500 mb-6">
-                Configure and launch fine-tuning of MODNet
+            <h1 className="text-2xl font-bold mb-1">Configuración de Entrenamiento</h1>
+            <p className="text-secondary mb-6">
+                Configura y lanza el fine-tuning de MODNet
             </p>
 
             <div className="space-y-6">
@@ -95,7 +95,7 @@ export default function TrainPage() {
                         onChange={(e) => update("dataset_id", e.target.value)}
                         className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
                     >
-                        <option value="">-- Select a local dataset --</option>
+                        <option value="">-- Selecciona un dataset local --</option>
                         {datasets.map((ds) => (
                             <option key={ds.id} value={ds.id}>
                                 {ds.name} ({ds.images_count} images)
@@ -105,25 +105,25 @@ export default function TrainPage() {
                 </Section>
 
                 {/* ── Stage ────────────────────────────────────── */}
-                <Section title="Training Stage">
+                <Section title="Etapa de Entrenamiento">
                     <div className="flex gap-3">
                         {[
                             {
                                 val: "supervised",
-                                label: "Supervised",
-                                desc: "Requires image + alpha GT. Uses trimap-based losses.",
+                                label: "Supervisado",
+                                desc: "Requiere imagen + alpha GT. Usa pérdidas basadas en trimap.",
                             },
                             {
                                 val: "soc",
                                 label: "SOC Adaptation",
-                                desc: "Self-supervised. No labels needed. Uses cross-branch consistency.",
+                                desc: "Auto-supervisado. No requiere etiquetas. Usa consistencia entre ramas.",
                             },
                         ].map((opt) => (
                             <label
                                 key={opt.val}
                                 className={`flex-1 border rounded-lg p-3 cursor-pointer transition-colors ${form.stage === opt.val
-                                        ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                                        : "dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                                    ? "border-accent bg-success dark:bg-blue-900/20"
+                                    : "dark:border-neutral-700 hover:bg-secondary dark:hover:bg-neutral-800"
                                     }`}
                             >
                                 <input
@@ -135,7 +135,7 @@ export default function TrainPage() {
                                     className="sr-only"
                                 />
                                 <div className="font-medium text-sm">{opt.label}</div>
-                                <div className="text-xs text-neutral-500 mt-0.5">
+                                <div className="text-xs text-secondary mt-0.5">
                                     {opt.desc}
                                 </div>
                             </label>
@@ -144,7 +144,7 @@ export default function TrainPage() {
                 </Section>
 
                 {/* ── Hyperparameters ─────────────────────────── */}
-                <Section title="Hyperparameters">
+                <Section title="Hiperparámetros">
                     <div className="grid grid-cols-2 gap-4">
                         <Field
                             label={isSoc ? "SOC Epochs" : "Epochs"}
@@ -192,7 +192,7 @@ export default function TrainPage() {
 
                 {/* ── Loss Weights (supervised only) ──────────── */}
                 {!isSoc && (
-                    <Section title="Loss Weights">
+                    <Section title="Pesos de Pérdida">
                         <div className="grid grid-cols-3 gap-4">
                             <Field
                                 label="Semantic"
@@ -217,7 +217,7 @@ export default function TrainPage() {
                 )}
 
                 {/* ── Model ────────────────────────────────────── */}
-                <Section title="Base Model">
+                <Section title="Modelo Base">
                     <label className="block text-sm font-medium mb-1">
                         Pretrained Checkpoint (optional)
                     </label>
@@ -227,7 +227,7 @@ export default function TrainPage() {
                         className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
                     >
                         <option value="">
-                            None (use ImageNet backbone)
+                            Ninguno (usar backbone ImageNet)
                         </option>
                         {checkpoints.map((ck) => (
                             <option key={ck.path} value={ck.path}>
@@ -240,10 +240,10 @@ export default function TrainPage() {
                 {/* ── Run Name ─────────────────────────────────── */}
                 <Section title="Run">
                     <Field
-                        label="Run Name"
+                        label="Nombre de Ejecución"
                         value={form.run_name}
                         onChange={(v) => update("run_name", v)}
-                        hint="Unique identifier for this training run"
+                        hint="Identificador único para esta ejecución de entrenamiento"
                     />
                 </Section>
 
@@ -252,16 +252,16 @@ export default function TrainPage() {
                     <button
                         onClick={handleStart}
                         disabled={starting || !form.dataset_id}
-                        className="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-medium disabled:opacity-50 hover:bg-blue-700 transition-colors"
+                        className="bg-primary text-white px-6 py-2.5 rounded-lg font-medium disabled:opacity-50 hover:bg-primary transition-colors"
                     >
-                        {starting ? "Starting..." : "Start Training"}
+                        {starting ? "Iniciando..." : "Iniciar Entrenamiento"}
                     </button>
 
                     {result && (
                         <span
                             className={`text-sm ${result.startsWith("Error")
-                                    ? "text-red-600"
-                                    : "text-green-600"
+                                ? "text-error"
+                                : "text-success"
                                 }`}
                         >
                             {result}
@@ -319,7 +319,7 @@ function Field({
                 className="w-full border rounded-lg px-3 py-1.5 text-sm dark:bg-neutral-900 dark:border-neutral-700"
             />
             {hint && (
-                <p className="text-[10px] text-neutral-400 mt-0.5">{hint}</p>
+                <p className="text-[10px] text-muted dark:text-neutral-400 mt-0.5">{hint}</p>
             )}
         </div>
     );

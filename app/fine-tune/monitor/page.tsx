@@ -194,9 +194,9 @@ export default function MonitorPage() {
             <div className="grid grid-cols-2 gap-6">
                 {/* ── Loss Chart (simple bar chart) ────────── */}
                 <div className="border rounded-lg p-4 dark:border-neutral-700">
-                    <h3 className="text-sm font-semibold mb-3">Loss per Epoch</h3>
+                    <h3 className="text-sm font-semibold mb-3">Pérdida por Época</h3>
                     {metrics.length === 0 ? (
-                        <div className="h-48 flex items-center justify-center text-sm text-neutral-400">
+                        <div className="h-48 flex items-center justify-center text-sm text-neutral-500 dark:text-neutral-400">
                             Waiting for data...
                         </div>
                     ) : (
@@ -223,7 +223,7 @@ export default function MonitorPage() {
                             })}
                         </div>
                     )}
-                    <div className="flex justify-between text-[10px] text-neutral-400 mt-1">
+                    <div className="flex justify-between text-[10px] text-neutral-500 dark:text-neutral-400 mt-1">
                         <span>Epoch 1</span>
                         <span>Epoch {metrics.length || "?"}</span>
                     </div>
@@ -231,10 +231,10 @@ export default function MonitorPage() {
 
                 {/* ── Loss Breakdown ─────────────────────────── */}
                 <div className="border rounded-lg p-4 dark:border-neutral-700">
-                    <h3 className="text-sm font-semibold mb-3">Loss Breakdown</h3>
+                    <h3 className="text-sm font-semibold mb-3">Pérdida por Época</h3>
                     {metrics.length === 0 ? (
-                        <div className="h-48 flex items-center justify-center text-sm text-neutral-400">
-                            Waiting for data...
+                        <div className="h-48 flex items-center justify-center text-sm text-neutral-500 dark:text-neutral-400">
+                            Esperando datos...
                         </div>
                     ) : (
                         <div className="space-y-2 h-48 overflow-y-auto">
