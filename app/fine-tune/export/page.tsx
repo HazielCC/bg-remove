@@ -51,7 +51,7 @@ export default function ExportPage() {
             const stem = selectedCkpt.split("/").pop()?.replace(".ckpt", "") || "model";
             const result = await apiPost<{ status: string; path: string; size_mb: number }>(
                 `/models/${encodeURIComponent(stem)}/export-onnx`,
-                { img_size: exportSize }
+                { img_size: exportSize, path: selectedCkpt }
             );
             addLog(`Exported: ${result.path} (${result.size_mb} MB)`);
             fetchModels();
@@ -74,7 +74,7 @@ export default function ExportPage() {
             const stem = selectedOnnx.split("/").pop()?.replace(".onnx", "") || "model";
             const result = await apiPost<{ status: string; path: string; size_mb: number }>(
                 `/models/${encodeURIComponent(stem)}/quantize`,
-                { dtype: quantDtype }
+                { dtype: quantDtype, path: selectedOnnx }
             );
             addLog(`Quantized: ${result.path} (${result.size_mb} MB)`);
             fetchModels();
@@ -101,6 +101,7 @@ export default function ExportPage() {
                 filename: string;
             }>(`/models/${encodeURIComponent(stem)}/deploy`, {
                 target_dir: "../public/models/modnet/onnx",
+                path: selectedOnnx,
             });
             addLog(
                 `Deployed! ${result.filename} → ${result.destination}`

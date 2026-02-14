@@ -13,7 +13,7 @@ import asyncio
 import shutil
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from config import settings
@@ -24,14 +24,17 @@ router = APIRouter()
 # ── Schemas ──────────────────────────────────────────────
 class ExportRequest(BaseModel):
     img_size: int = 512
+    path: str | None = None
 
 
 class QuantizeRequest(BaseModel):
     dtype: str = "uint8"  # "fp16" or "uint8"
+    path: str | None = None
 
 
 class DeployRequest(BaseModel):
     target_dir: str = "../public/models/modnet/onnx"
+    path: str | None = None
 
 
 class CompareRequest(BaseModel):
@@ -97,8 +100,8 @@ async def export_onnx(model_id: str, req: ExportRequest):
     """Export a checkpoint to ONNX format."""
     from ml.export import export_to_onnx
 
-    # Find checkpoint
-    ckpt_path = _find_checkpoint(model_id)
+    # Prefer explicit path from request (avoids ambiguous stem matches)
+    ckpt_path = _resolve_checkpoint_path(req.path) if req.path else _find_checkpoint(model_id)
     if not ckpt_path:
         raise HTTPException(status_code=404, detail=f"Checkpoint not found: {model_id}")
 
@@ -128,8 +131,8 @@ async def quantize_model(model_id: str, req: QuantizeRequest):
     """Quantize an ONNX model to fp16 or uint8."""
     from ml.export import quantize_fp16, quantize_uint8
 
-    # Find ONNX file
-    onnx_path = _find_onnx(model_id)
+    # Prefer explicit path from request (avoids ambiguous stem matches)
+    onnx_path = _resolve_onnx_path(req.path) if req.path else _find_onnx(model_id)
     if not onnx_path:
         raise HTTPException(status_code=404, detail=f"ONNX model not found: {model_id}")
 
@@ -155,7 +158,8 @@ async def quantize_model(model_id: str, req: QuantizeRequest):
 @router.post("/{model_id}/deploy")
 async def deploy_model(model_id: str, req: DeployRequest):
     """Copy an ONNX model to the frontend public directory."""
-    onnx_path = _find_onnx(model_id)
+    # Prefer explicit path from request (avoids ambiguous stem matches)
+    onnx_path = _resolve_onnx_path(req.path) if req.path else _find_onnx(model_id)
     if not onnx_path:
         raise HTTPException(status_code=404, detail=f"ONNX model not found: {model_id}")
 
@@ -198,7 +202,7 @@ async def compare_models(req: CompareRequest):
 
     device = settings.get_torch_device()
 
-    async def _compare():
+    def _compare():
         # Load both models
         model_a = MODNet.from_pretrained(
             req.model_a, device=str(device), backbone_pretrained=False
@@ -273,34 +277,91 @@ async def compare_models(req: CompareRequest):
 
 
 # ── Helpers ──────────────────────────────────────────────
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_checkpoint_path(path_str: str | None) -> Path | None:
+    if not path_str:
+        return None
+    p = Path(path_str)
+    if not p.exists() or p.suffix != ".ckpt":
+        return None
+    resolved = p.resolve()
+    allowed_roots = [settings.checkpoint_path.resolve(), settings.model_path.resolve()]
+    if any(_is_under(resolved, root) for root in allowed_roots):
+        return resolved
+    return None
+
+
+def _resolve_onnx_path(path_str: str | None) -> Path | None:
+    if not path_str:
+        return None
+    p = Path(path_str)
+    if not p.exists() or p.suffix != ".onnx":
+        return None
+    resolved = p.resolve()
+    if _is_under(resolved, settings.export_path.resolve()):
+        return resolved
+    return None
+
+
 def _find_checkpoint(model_id: str) -> Path | None:
     """Find a checkpoint by name or path."""
     # Direct path
-    p = Path(model_id)
-    if p.exists() and p.suffix == ".ckpt":
-        return p
+    direct = _resolve_checkpoint_path(model_id)
+    if direct:
+        return direct
 
     # Search in checkpoints dir
+    matches: list[Path] = []
     for ckpt in settings.checkpoint_path.rglob("*.ckpt"):
         if ckpt.stem == model_id or ckpt.name == model_id:
-            return ckpt
+            matches.append(ckpt)
 
     # Search in models dir
     for ckpt in settings.model_path.rglob("*.ckpt"):
         if ckpt.stem == model_id or ckpt.name == model_id:
-            return ckpt
+            matches.append(ckpt)
+
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Ambiguous checkpoint id: {model_id}. "
+                "Provide the exact checkpoint path in request body."
+            ),
+        )
+    if len(matches) == 1:
+        return matches[0]
 
     return None
 
 
 def _find_onnx(model_id: str) -> Path | None:
     """Find an ONNX model by name or path."""
-    p = Path(model_id)
-    if p.exists() and p.suffix == ".onnx":
-        return p
+    direct = _resolve_onnx_path(model_id)
+    if direct:
+        return direct
 
+    matches: list[Path] = []
     for onnx_file in settings.export_path.rglob("*.onnx"):
         if onnx_file.stem == model_id or onnx_file.name == model_id:
-            return onnx_file
+            matches.append(onnx_file)
+
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Ambiguous ONNX model id: {model_id}. "
+                "Provide the exact ONNX path in request body."
+            ),
+        )
+    if len(matches) == 1:
+        return matches[0]
 
     return None

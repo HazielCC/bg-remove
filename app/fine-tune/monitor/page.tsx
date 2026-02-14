@@ -100,10 +100,15 @@ export default function MonitorPage() {
 
         sourceRef.current = source;
         setConnected(true);
+    }, []);
 
+    // Cleanup SSE connection on unmount
+    useEffect(() => {
         return () => {
-            source.close();
-            setConnected(false);
+            if (sourceRef.current) {
+                sourceRef.current.close();
+                sourceRef.current = null;
+            }
         };
     }, []);
 

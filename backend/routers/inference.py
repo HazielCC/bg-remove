@@ -22,6 +22,24 @@ from ml.modnet import MODNet
 router = APIRouter()
 
 
+def _resolve_dataset_path(dataset_id: str) -> Path:
+    """Resolve dataset path and ensure it stays under settings.dataset_path."""
+    if not dataset_id or not dataset_id.strip():
+        raise HTTPException(status_code=400, detail="Invalid dataset id")
+
+    base = settings.dataset_path.resolve()
+    dataset_path = (base / dataset_id).resolve()
+    if dataset_path == base:
+        raise HTTPException(status_code=400, detail="Invalid dataset id")
+
+    try:
+        dataset_path.relative_to(base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid dataset id") from exc
+
+    return dataset_path
+
+
 @router.post("/run")
 async def run_inference(
     image: UploadFile = File(...),
@@ -122,11 +140,11 @@ async def batch_inference(
     """
     from ml.metrics import evaluate_matting
 
-    ds_path = settings.dataset_path / dataset_id
+    ds_path = _resolve_dataset_path(dataset_id)
     if not ds_path.exists():
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    async def _batch():
+    def _batch():
         device = settings.get_torch_device()
 
         # Load model

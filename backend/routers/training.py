@@ -12,12 +12,12 @@ Endpoints:
 
 import asyncio
 import json
-import time
+from typing import Literal
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config import settings
 from ml.trainer import (
@@ -31,33 +31,56 @@ from ml.trainer import (
 router = APIRouter()
 
 
+def _resolve_dataset_path(dataset_id: str) -> Path:
+    """Resolve dataset path and ensure it stays under settings.dataset_path."""
+    if not dataset_id or not dataset_id.strip():
+        raise HTTPException(status_code=400, detail="Invalid dataset id")
+
+    base = settings.dataset_path.resolve()
+    dataset_path = (base / dataset_id).resolve()
+    if dataset_path == base:
+        raise HTTPException(status_code=400, detail="Invalid dataset id")
+
+    try:
+        dataset_path.relative_to(base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid dataset id") from exc
+
+    return dataset_path
+
+
 # ── Schemas ──────────────────────────────────────────────
 class TrainRequest(BaseModel):
     dataset_id: str
-    stage: str = "supervised"  # "supervised" | "soc"
-    epochs: int = 40
-    lr: float = 0.01
-    batch_size: int = 4
-    img_size: int = 512
+    stage: Literal["supervised", "soc"] = "supervised"
+    epochs: int = Field(40, ge=1)
+    lr: float = Field(0.01, gt=0)
+    batch_size: int = Field(4, ge=1)
+    img_size: int = Field(512, ge=32)
     pretrained_ckpt: str | None = None
-    run_name: str = "run_001"
+    run_name: str = Field(
+        "run_001",
+        min_length=1,
+        max_length=80,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
 
     # Loss weights (supervised)
-    semantic_loss_weight: float = 10.0
-    detail_loss_weight: float = 10.0
-    matte_loss_weight: float = 1.0
+    semantic_loss_weight: float = Field(10.0, ge=0)
+    detail_loss_weight: float = Field(10.0, ge=0)
+    matte_loss_weight: float = Field(1.0, ge=0)
 
     # SOC params
-    soc_lr: float = 0.00001
-    soc_epochs: int = 10
+    soc_lr: float = Field(0.00001, gt=0)
+    soc_epochs: int = Field(10, ge=1)
 
     # Data
-    train_split: float = 0.8
-    val_split: float = 0.1
+    train_split: float = Field(0.8, gt=0, lt=1)
+    val_split: float = Field(0.1, gt=0, lt=1)
     backgrounds_dir: str | None = None
 
     # Checkpointing
-    save_every: int = 5
+    save_every: int = Field(5, ge=1)
 
 
 # Global SSE queue — created per training run
@@ -76,7 +99,7 @@ async def start_training(req: TrainRequest):
         raise HTTPException(status_code=409, detail="Training already in progress")
 
     # Resolve dataset path
-    ds_path = settings.dataset_path / req.dataset_id
+    ds_path = _resolve_dataset_path(req.dataset_id)
     if not ds_path.exists():
         raise HTTPException(
             status_code=404, detail=f"Dataset not found: {req.dataset_id}"

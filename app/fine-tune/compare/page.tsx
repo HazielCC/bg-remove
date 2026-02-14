@@ -109,10 +109,10 @@ export default function ComparePage() {
             {/* ── Model Selection ──────────────────────────── */}
             <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className="border rounded-lg p-4 dark:border-neutral-700">
-                    <label className="block text-sm font-medium mb-1">Modelo B</label>
+                    <label className="block text-sm font-medium mb-1">Modelo A</label>
                     <select
-                        value={modelB}
-                        onChange={(e) => setModelB(e.target.value)}
+                        value={modelA}
+                        onChange={(e) => setModelA(e.target.value)}
                         className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
                     >
                         <option value="">-- Seleccionar modelo --</option>
@@ -125,7 +125,7 @@ export default function ComparePage() {
                     </select>
                 </div>
                 <div className="border rounded-lg p-4 dark:border-neutral-700">
-                    <h3 className="text-sm font-semibold mb-2">Model B (Fine-tuned)</h3>
+                    <h3 className="text-sm font-semibold mb-2">Modelo B</h3>
                     <select
                         value={modelB}
                         onChange={(e) => setModelB(e.target.value)}
