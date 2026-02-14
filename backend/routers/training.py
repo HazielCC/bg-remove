@@ -17,7 +17,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from config import settings
 from ml.trainer import (
@@ -82,6 +82,12 @@ class TrainRequest(BaseModel):
     # Checkpointing
     save_every: int = Field(5, ge=1)
 
+    @model_validator(mode="after")
+    def validate_split_sum(self):
+        if self.train_split + self.val_split > 1.0:
+            raise ValueError("train_split + val_split must be <= 1.0")
+        return self
+
 
 # Global SSE queue — created per training run
 _event_queue: asyncio.Queue | None = None
@@ -122,6 +128,7 @@ async def start_training(req: TrainRequest):
         soc_lr=req.soc_lr,
         soc_epochs=req.soc_epochs,
         save_every=req.save_every,
+        train_split=req.train_split,
         val_split_ratio=req.val_split,
         backgrounds_dir=req.backgrounds_dir,
         run_name=req.run_name,

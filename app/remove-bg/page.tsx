@@ -132,7 +132,7 @@ export default function RemoveBgPage() {
             value={variant}
             onChange={(e) => setVariant(e.target.value as any)}
           >
-            <option value="auto">Auto (cuantizado)</option>
+            <option value="auto">Auto (q8/uint8)</option>
             <option value="fp32">FP32 (completo)</option>
             <option value="fp16">FP16 (medio)</option>
             <option value="uint8">UINT8 (cuantizado)</option>

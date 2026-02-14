@@ -16,14 +16,42 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Dataset, random_split
 from scipy.ndimage import grey_dilation, grey_erosion
+from PIL import Image
 
 from ml.modnet import MODNet, GaussianBlurLayer
 from ml.dataset import MattingDataset
-from ml.metrics import compute_sad, compute_mse, compute_gradient_error
+
+
+class UnlabeledImageDataset(Dataset):
+    """Image-only dataset used by SOC adaptation (no alpha labels required)."""
+
+    def __init__(self, root: str, img_size: int = 512, split: str = "train"):
+        self.root = Path(root)
+        self.img_size = img_size
+
+        images_dir = self.root / "images"
+        if (images_dir / split).exists():
+            images_dir = images_dir / split
+
+        exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
+        self.image_paths = (
+            sorted([p for p in images_dir.rglob("*") if p.suffix.lower() in exts])
+            if images_dir.exists()
+            else []
+        )
+
+    def __len__(self) -> int:
+        return len(self.image_paths)
+
+    def __getitem__(self, idx: int) -> torch.Tensor:
+        img = Image.open(self.image_paths[idx]).convert("RGB")
+        img = img.resize((self.img_size, self.img_size), Image.BILINEAR)
+        arr = np.array(img).astype(np.float32) / 255.0
+        arr = (arr - 0.5) / 0.5  # normalize to [-1, 1]
+        return torch.from_numpy(arr).permute(2, 0, 1)
 
 
 @dataclass
@@ -113,6 +141,41 @@ def _send_event(event: dict):
             pass  # skip if queue is full
 
 
+def _compute_train_val_sizes(
+    total: int, train_ratio: float, val_ratio: float
+) -> tuple[int, int]:
+    """
+    Compute train/val sizes from ratios while keeping splits feasible.
+
+    - Uses all available samples for train+val.
+    - Guarantees at least 1 training sample if total > 0.
+    - Allows val_size=0 only when total == 1.
+    """
+    if total <= 0:
+        return 0, 0
+    if total == 1:
+        return 1, 0
+
+    train_size = max(1, int(round(total * train_ratio)))
+    val_size = max(1, int(round(total * val_ratio)))
+
+    used = train_size + val_size
+    if used > total:
+        overflow = used - total
+        # Prefer reducing validation first to keep more optimization signal.
+        reducible_val = max(0, val_size - 1)
+        reduce_val = min(reducible_val, overflow)
+        val_size -= reduce_val
+        overflow -= reduce_val
+        if overflow > 0:
+            train_size = max(1, train_size - overflow)
+    elif used < total:
+        # Assign remaining samples to train split.
+        train_size += total - used
+
+    return train_size, val_size
+
+
 # ── Loss functions ───────────────────────────────────────
 def supervised_loss(
     img: torch.Tensor,
@@ -129,19 +192,44 @@ def supervised_loss(
 
     Returns: (semantic_loss, detail_loss, matte_loss)
     """
+    # Align GT tensors with prediction resolutions to avoid shape mismatches.
+    matte_size = pred_matte.shape[2:]
+    detail_size = pred_detail.shape[2:]
+    sem_size = pred_semantic.shape[2:]
+
+    if gt_matte.shape[2:] != matte_size:
+        gt_matte_full = F.interpolate(
+            gt_matte, size=matte_size, mode="bilinear", align_corners=False
+        )
+    else:
+        gt_matte_full = gt_matte
+
+    if trimap.shape[2:] != matte_size:
+        trimap_full = F.interpolate(trimap, size=matte_size, mode="nearest")
+    else:
+        trimap_full = trimap
+
+    if img.shape[2:] != matte_size:
+        img_full = F.interpolate(img, size=matte_size, mode="bilinear", align_corners=False)
+    else:
+        img_full = img
+
     # ── Semantic loss: MSE on blurred downsampled GT ──
     gt_semantic = F.interpolate(
-        gt_matte, scale_factor=1 / 16, mode="bilinear", align_corners=False
+        gt_matte_full, size=sem_size, mode="bilinear", align_corners=False
     )
     gt_semantic = blurer(gt_semantic)
     semantic_loss = F.mse_loss(pred_semantic, gt_semantic) * weights[0]
 
     # ── Detail loss: L1 only at transition region of trimap ──
-    trimap_hr = F.interpolate(trimap, size=pred_detail.shape[2:], mode="nearest")
+    trimap_hr = F.interpolate(trimap_full, size=detail_size, mode="nearest")
+    gt_detail = F.interpolate(
+        gt_matte_full, size=detail_size, mode="bilinear", align_corners=False
+    )
     transition_mask = (trimap_hr == 0.5).float()
     if transition_mask.sum() > 0:
         detail_loss = (
-            F.l1_loss(pred_detail * transition_mask, gt_matte * transition_mask)
+            F.l1_loss(pred_detail * transition_mask, gt_detail * transition_mask)
             * weights[1]
         )
     else:
@@ -149,15 +237,14 @@ def supervised_loss(
 
     # ── Matte loss: L1 + compositional L1 (weighted heavier at boundaries) ──
     # Boundary weighting: 4x weight at transition regions
-    boundary_weight = torch.ones_like(gt_matte)
-    trimap_full = F.interpolate(trimap, size=gt_matte.shape[2:], mode="nearest")
+    boundary_weight = torch.ones_like(gt_matte_full)
     boundary_weight[trimap_full == 0.5] = 4.0
 
-    l1_loss = (torch.abs(pred_matte - gt_matte) * boundary_weight).mean()
+    l1_loss = (torch.abs(pred_matte - gt_matte_full) * boundary_weight).mean()
 
     # Compositional loss: compare composited image
-    pred_comp = pred_matte * img
-    gt_comp = gt_matte * img
+    pred_comp = pred_matte * img_full
+    gt_comp = gt_matte_full * img_full
     comp_loss = (torch.abs(pred_comp - gt_comp) * boundary_weight).mean()
 
     matte_loss = (l1_loss + comp_loss) * weights[2]
@@ -200,8 +287,11 @@ def run_supervised_training(
         if len(dataset) == 0:
             raise ValueError(f"No samples found in {config.dataset_dir}")
 
-        val_size = max(1, int(len(dataset) * config.val_split_ratio))
-        train_size = len(dataset) - val_size
+        train_size, val_size = _compute_train_val_sizes(
+            len(dataset), config.train_split, config.val_split_ratio
+        )
+        if train_size < 1:
+            raise ValueError("Dataset must contain at least 1 valid training sample")
         train_ds, val_ds = random_split(dataset, [train_size, val_size])
 
         train_loader = DataLoader(
@@ -211,13 +301,15 @@ def run_supervised_training(
             num_workers=config.num_workers,
             pin_memory=False,
         )
-        val_loader = DataLoader(
-            val_ds,
-            batch_size=config.batch_size,
-            shuffle=False,
-            num_workers=config.num_workers,
-            pin_memory=False,
-        )
+        val_loader = None
+        if val_size > 0:
+            val_loader = DataLoader(
+                val_ds,
+                batch_size=config.batch_size,
+                shuffle=False,
+                num_workers=config.num_workers,
+                pin_memory=False,
+            )
 
         # ── Optimizer ──
         optimizer = torch.optim.SGD(model.parameters(), lr=config.lr, momentum=0.9)
@@ -279,6 +371,11 @@ def run_supervised_training(
                 epoch_losses["total"] += loss.item()
                 n_batches += 1
 
+            if _stop_flag:
+                training_state.status = "stopped"
+                _send_event({"type": "stopped", "epoch": epoch})
+                break
+
             scheduler.step()
 
             # Averages
@@ -287,7 +384,21 @@ def run_supervised_training(
                     epoch_losses[k] /= n_batches
 
             # Validation
-            val_loss = _validate(model, val_loader, blurer, device)
+            if val_loader is not None:
+                val_loss = _validate(
+                    model,
+                    val_loader,
+                    blurer,
+                    device,
+                    weights=(
+                        config.semantic_loss_weight,
+                        config.detail_loss_weight,
+                        config.matte_loss_weight,
+                    ),
+                )
+            else:
+                # Fallback when no validation split is possible (very small datasets)
+                val_loss = epoch_losses["total"]
 
             elapsed = time.time() - start_time
             eta = (elapsed / epoch) * (config.epochs - epoch) if epoch > 0 else 0
@@ -386,12 +497,12 @@ def run_soc_adaptation(
         model.freeze_norm()
         model.train()
 
-        dataset = MattingDataset(
-            root=config.dataset_dir,
-            split="train",
-            img_size=config.img_size,
-            augment=False,
+        # SOC works with unlabeled images; alpha masks are optional here.
+        dataset = UnlabeledImageDataset(
+            root=config.dataset_dir, split="train", img_size=config.img_size
         )
+        if len(dataset) == 0:
+            raise ValueError(f"No images found in {config.dataset_dir}/images")
 
         loader = DataLoader(
             dataset, batch_size=1, shuffle=True, num_workers=config.num_workers
@@ -409,11 +520,12 @@ def run_soc_adaptation(
         for epoch in range(1, epochs + 1):
             if _stop_flag:
                 training_state.status = "stopped"
+                _send_event({"type": "stopped", "epoch": epoch})
                 break
 
             total_loss = 0
             n = 0
-            for imgs, _, _ in loader:
+            for imgs in loader:
                 if _stop_flag:
                     break
 
@@ -463,6 +575,11 @@ def run_soc_adaptation(
                 total_loss += loss.item()
                 n += 1
 
+            if _stop_flag:
+                training_state.status = "stopped"
+                _send_event({"type": "stopped", "epoch": epoch})
+                break
+
             avg_loss = total_loss / max(n, 1)
             elapsed = time.time() - start_time
             eta = (elapsed / epoch) * (epochs - epoch)
@@ -492,10 +609,12 @@ def run_soc_adaptation(
 
         if not _stop_flag:
             training_state.status = "finished"
+            _send_event({"type": "finished"})
 
     except Exception as e:
         training_state.status = "error"
         training_state.error_message = str(e)
+        _send_event({"type": "error", "message": str(e)})
         raise
 
 
@@ -524,6 +643,7 @@ def _validate(
     val_loader: DataLoader,
     blurer: GaussianBlurLayer,
     device: torch.device,
+    weights: tuple[float, float, float] = (10.0, 10.0, 1.0),
 ) -> float:
     model.eval()
     total_loss = 0
@@ -536,7 +656,14 @@ def _validate(
 
             pred_sem, pred_det, pred_mat = model(imgs, inference=False)
             sem_l, det_l, mat_l = supervised_loss(
-                imgs, pred_sem, pred_det, pred_mat, alphas, trimaps, blurer
+                imgs,
+                pred_sem,
+                pred_det,
+                pred_mat,
+                alphas,
+                trimaps,
+                blurer,
+                weights=weights,
             )
             total_loss += (sem_l + det_l + mat_l).item()
             n += 1

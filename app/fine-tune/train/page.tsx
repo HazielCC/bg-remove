@@ -40,6 +40,7 @@ export default function TrainPage() {
         matte_loss_weight: 1.0,
         soc_lr: 0.00001,
         soc_epochs: 10,
+        train_split: 0.8,
         val_split: 0.1,
         save_every: 5,
         backgrounds_dir: "",
@@ -57,6 +58,10 @@ export default function TrainPage() {
     const handleStart = async () => {
         if (!form.dataset_id) {
             alert("Select a dataset first");
+            return;
+        }
+        if (form.train_split + form.val_split > 1) {
+            setResult("Error: train_split + val_split debe ser <= 1.0");
             return;
         }
         setStarting(true);
@@ -185,6 +190,15 @@ export default function TrainPage() {
                             onChange={(v) => update("img_size", Number(v))}
                             hint="512 recommended"
                             tooltip="Resolución cuadrada de entrenamiento. Mayor tamaño mejora detalle, pero aumenta costo."
+                        />
+                        <Field
+                            label="Train Split"
+                            type="number"
+                            value={form.train_split}
+                            onChange={(v) => update("train_split", Number(v))}
+                            step="0.05"
+                            hint="0.8 = 80%"
+                            tooltip="Porcentaje usado para entrenamiento. Debe sumar <= 1.0 junto con Validation Split."
                         />
                         <Field
                             label="Validation Split"
