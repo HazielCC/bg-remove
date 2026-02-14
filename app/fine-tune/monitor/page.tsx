@@ -42,6 +42,45 @@ interface TrainingStatus {
     error_message: string;
 }
 
+interface DatasetInfo {
+    id: string;
+    name: string;
+    images_count: number;
+    alphas_count: number;
+}
+
+interface BenchmarkModelRow {
+    rank?: number;
+    checkpoint: string;
+    run?: string;
+    name: string;
+    status: "ok" | "error";
+    n_images?: number;
+    avg_metrics?: {
+        sad?: number;
+        mse?: number;
+        gradient_error?: number;
+        connectivity_error?: number;
+    };
+    avg_inference_ms?: number | null;
+    overall_score?: number;
+    error?: string;
+}
+
+interface BenchmarkResponse {
+    dataset_id: string;
+    n_images: number;
+    ranked_models: BenchmarkModelRow[];
+    failed_models: BenchmarkModelRow[];
+    metric_baselines?: {
+        sad?: number;
+        mse?: number;
+        gradient_error?: number;
+        connectivity_error?: number;
+    };
+    score_formula: string;
+}
+
 function makeEmptyStatus(): TrainingStatus {
     return {
         status: "idle",
@@ -65,6 +104,14 @@ export default function MonitorPage() {
     const [status, setStatus] = useState<TrainingStatus | null>(null);
     const [metrics, setMetrics] = useState<EpochMetric[]>([]);
     const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
+    const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
+    const [benchmarkDatasetId, setBenchmarkDatasetId] = useState("");
+    const [benchmarkMaxImages, setBenchmarkMaxImages] = useState(40);
+    const [benchmarkImgSize, setBenchmarkImgSize] = useState(512);
+    const [benchmarkLoading, setBenchmarkLoading] = useState(false);
+    const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkResponse | null>(
+        null
+    );
     const [logs, setLogs] = useState<string[]>([]);
     const [connected, setConnected] = useState(false);
     const sourceRef = useRef<EventSource | null>(null);
@@ -78,6 +125,17 @@ export default function MonitorPage() {
     useEffect(() => {
         apiFetch<TrainingStatus>("/training/status")
             .then(setStatus)
+            .catch(console.error);
+    }, []);
+
+    useEffect(() => {
+        apiFetch<DatasetInfo[]>("/datasets/local")
+            .then((rows) => {
+                setDatasets(rows);
+                if (rows.length > 0) {
+                    setBenchmarkDatasetId((prev) => prev || rows[0].id);
+                }
+            })
             .catch(console.error);
     }, []);
 
@@ -224,11 +282,42 @@ export default function MonitorPage() {
         }
     };
 
+    const handleBenchmark = async () => {
+        if (!benchmarkDatasetId) {
+            appendLog("ERROR: Selecciona un dataset para benchmark");
+            return;
+        }
+        setBenchmarkLoading(true);
+        appendLog(
+            `Benchmark started | dataset=${benchmarkDatasetId} | img_size=${benchmarkImgSize} | max_images=${benchmarkMaxImages}`
+        );
+        try {
+            const result = await apiPost<BenchmarkResponse>("/models/benchmark", {
+                dataset_id: benchmarkDatasetId,
+                max_images: benchmarkMaxImages,
+                img_size: benchmarkImgSize,
+            });
+            setBenchmarkResult(result);
+            appendLog(
+                `Benchmark finished | ranked=${result.ranked_models.length} | failed=${result.failed_models.length}`
+            );
+        } catch (e) {
+            appendLog(`ERROR: benchmark failed: ${(e as Error).message}`);
+        } finally {
+            setBenchmarkLoading(false);
+        }
+    };
+
     const formatTime = (seconds: number) => {
         const m = Math.floor(seconds / 60);
         const s = Math.floor(seconds % 60);
         return `${m}m ${s}s`;
     };
+
+    const fmtMetric = (value?: number | null, decimals = 4) =>
+        typeof value === "number" && Number.isFinite(value)
+            ? value.toFixed(decimals)
+            : "—";
 
     const maxLoss = metrics.length
         ? Math.max(...metrics.map((m) => m.total_loss || 0)) * 1.1
@@ -346,6 +435,138 @@ export default function MonitorPage() {
                     )}
                 </div>
             )}
+
+            <div className="mb-6 border rounded-lg p-4 dark:border-neutral-700">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                        <h3 className="text-sm font-semibold inline-flex items-center">
+                            Benchmark de Checkpoints
+                            <HelpTip text="Evalúa todos los checkpoints con métricas objetivas sobre un dataset local etiquetado (images+alphas)." />
+                        </h3>
+                        <p className="text-xs text-neutral-500 mt-1">
+                            Score menor = mejor. Basado en SAD, MSE, gradient y connectivity.
+                        </p>
+                    </div>
+                    <button
+                        onClick={handleBenchmark}
+                        disabled={benchmarkLoading || !benchmarkDatasetId}
+                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm disabled:opacity-50"
+                    >
+                        {benchmarkLoading ? "Benchmark..." : "Run Benchmark"}
+                    </button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div>
+                        <label className="text-xs text-neutral-500 mb-1 block">Dataset</label>
+                        <select
+                            value={benchmarkDatasetId}
+                            onChange={(e) => setBenchmarkDatasetId(e.target.value)}
+                            className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
+                        >
+                            <option value="">-- Selecciona dataset --</option>
+                            {datasets.map((d) => (
+                                <option key={d.id} value={d.id}>
+                                    {d.name} ({d.images_count} imgs / {d.alphas_count} alpha)
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <div>
+                        <label className="text-xs text-neutral-500 mb-1 block">Max Images</label>
+                        <input
+                            type="number"
+                            min={1}
+                            value={benchmarkMaxImages}
+                            onChange={(e) =>
+                                setBenchmarkMaxImages(Math.max(1, Number(e.target.value) || 1))
+                            }
+                            className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs text-neutral-500 mb-1 block">Image Size</label>
+                        <input
+                            type="number"
+                            min={32}
+                            value={benchmarkImgSize}
+                            onChange={(e) =>
+                                setBenchmarkImgSize(Math.max(32, Number(e.target.value) || 32))
+                            }
+                            className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
+                        />
+                    </div>
+                </div>
+
+                {benchmarkResult && (
+                    <div className="space-y-3">
+                        <div className="text-xs text-neutral-500">
+                            Dataset: <span className="font-mono">{benchmarkResult.dataset_id}</span>
+                            {" · "}
+                            Samples: {benchmarkResult.n_images}
+                            {" · "}
+                            Formula: <span className="font-mono">{benchmarkResult.score_formula}</span>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full text-xs border-collapse">
+                                <thead>
+                                    <tr className="text-left border-b dark:border-neutral-700">
+                                        <th className="py-2 pr-3">Rank</th>
+                                        <th className="py-2 pr-3">Model</th>
+                                        <th className="py-2 pr-3">SAD</th>
+                                        <th className="py-2 pr-3">MSE</th>
+                                        <th className="py-2 pr-3">Grad</th>
+                                        <th className="py-2 pr-3">Conn</th>
+                                        <th className="py-2 pr-3">ms/img</th>
+                                        <th className="py-2 pr-0">Score</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {benchmarkResult.ranked_models.map((row) => (
+                                        <tr
+                                            key={row.checkpoint}
+                                            className={`border-b dark:border-neutral-800 ${row.rank === 1 ? "bg-emerald-50 dark:bg-emerald-900/20" : ""}`}
+                                        >
+                                            <td className="py-2 pr-3 font-semibold">
+                                                {row.rank}
+                                            </td>
+                                            <td className="py-2 pr-3">
+                                                <div className="font-medium">{row.name}</div>
+                                                <div className="text-neutral-500">{row.run ?? "—"}</div>
+                                            </td>
+                                            <td className="py-2 pr-3">
+                                                {fmtMetric(row.avg_metrics?.sad)}
+                                            </td>
+                                            <td className="py-2 pr-3">
+                                                {fmtMetric(row.avg_metrics?.mse, 6)}
+                                            </td>
+                                            <td className="py-2 pr-3">
+                                                {fmtMetric(row.avg_metrics?.gradient_error)}
+                                            </td>
+                                            <td className="py-2 pr-3">
+                                                {fmtMetric(row.avg_metrics?.connectivity_error)}
+                                            </td>
+                                            <td className="py-2 pr-3">
+                                                {fmtMetric(row.avg_inference_ms, 2)}
+                                            </td>
+                                            <td className="py-2 pr-0 font-semibold">
+                                                {fmtMetric(row.overall_score, 4)}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {benchmarkResult.failed_models.length > 0 && (
+                            <div className="text-xs text-amber-600 dark:text-amber-400">
+                                Checkpoints con error: {benchmarkResult.failed_models.length}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
 
             <div className="grid grid-cols-2 gap-6">
                 {/* ── Loss Chart (simple bar chart) ────────── */}

@@ -7,10 +7,12 @@ Endpoints:
   POST /{id}/quantize    — quantize ONNX (fp16 / uint8)
   POST /{id}/deploy      — copy ONNX to public/models/ for frontend use
   POST /compare          — run inference with 2 models for comparison
+  POST /benchmark        — benchmark checkpoints on a labeled local dataset
 """
 
 import asyncio
 import shutil
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -40,6 +42,13 @@ class DeployRequest(BaseModel):
 class CompareRequest(BaseModel):
     model_a: str  # checkpoint path or ONNX path
     model_b: str
+
+
+class BenchmarkRequest(BaseModel):
+    dataset_id: str
+    checkpoints: list[str] | None = None
+    max_images: int = 40
+    img_size: int = 512
 
 
 # ── List Models ──────────────────────────────────────────
@@ -276,7 +285,257 @@ async def compare_models(req: CompareRequest):
     return await asyncio.to_thread(_compare)
 
 
+@router.post("/benchmark")
+async def benchmark_models(req: BenchmarkRequest):
+    """
+    Benchmark checkpoints on a local dataset with alpha labels.
+
+    Returns per-model metrics averages and a ranking.
+    """
+    import numpy as np
+    import torch
+    from PIL import Image
+    from ml.metrics import evaluate_matting
+    from ml.modnet import MODNet
+
+    if req.max_images < 1:
+        raise HTTPException(status_code=400, detail="max_images must be >= 1")
+    if req.img_size < 32:
+        raise HTTPException(status_code=400, detail="img_size must be >= 32")
+
+    ds_path = _resolve_dataset_path(req.dataset_id)
+    if not ds_path.exists():
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    def _collect_checkpoints() -> list[Path]:
+        if req.checkpoints:
+            resolved: list[Path] = []
+            seen: set[str] = set()
+            for ckpt_str in req.checkpoints:
+                ckpt = _resolve_checkpoint_path(ckpt_str)
+                if ckpt is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid checkpoint path: {ckpt_str}",
+                    )
+                key = str(ckpt.resolve())
+                if key not in seen:
+                    seen.add(key)
+                    resolved.append(ckpt)
+            return resolved
+
+        discovered: list[Path] = []
+        discovered.extend(sorted(settings.checkpoint_path.rglob("*.ckpt")))
+        discovered.extend(sorted(settings.model_path.rglob("*.ckpt")))
+
+        uniq: dict[str, Path] = {}
+        for ckpt in discovered:
+            uniq[str(ckpt.resolve())] = ckpt
+        return list(uniq.values())
+
+    def _find_alpha_for_image(
+        img_path: Path, images_dir: Path, alphas_dir: Path
+    ) -> Path | None:
+        rel = img_path.relative_to(images_dir)
+        exts = [".png", ".jpg", ".jpeg"]
+        candidates: list[Path] = []
+
+        # Mirror the image directory structure under alphas/.
+        for ext in exts:
+            candidates.append(alphas_dir / rel.with_suffix(ext))
+
+        # Fallbacks for flat or legacy layouts.
+        for ext in exts:
+            candidates.append(alphas_dir / (img_path.stem + ext))
+            candidates.append(alphas_dir / rel.parent.name / (img_path.stem + ext))
+
+        for p in candidates:
+            if p.exists():
+                return p
+        return None
+
+    def _prepare_pairs(images_dir: Path, alphas_dir: Path) -> list[tuple[Path, Path]]:
+        exts = {".jpg", ".jpeg", ".png", ".webp"}
+        all_images = sorted(
+            [f for f in images_dir.rglob("*") if f.suffix.lower() in exts]
+        )
+
+        pairs: list[tuple[Path, Path]] = []
+        for img_path in all_images:
+            alpha_path = _find_alpha_for_image(img_path, images_dir, alphas_dir)
+            if alpha_path is not None:
+                pairs.append((img_path, alpha_path))
+            if len(pairs) >= req.max_images:
+                break
+        return pairs
+
+    def _benchmark():
+        images_dir = ds_path / "images"
+        alphas_dir = ds_path / "alphas"
+        if not images_dir.exists() or not alphas_dir.exists():
+            raise HTTPException(
+                status_code=422,
+                detail="Dataset must contain images/ and alphas/ directories",
+            )
+
+        pairs = _prepare_pairs(images_dir, alphas_dir)
+        if not pairs:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "No labeled pairs found in dataset. "
+                    "Expected matching files under images/ and alphas/."
+                ),
+            )
+
+        checkpoints = _collect_checkpoints()
+        if not checkpoints:
+            raise HTTPException(status_code=404, detail="No checkpoints found to benchmark")
+
+        device = settings.get_torch_device()
+        model_rows: list[dict] = []
+
+        for ckpt_path in checkpoints:
+            try:
+                model = MODNet.from_pretrained(
+                    str(ckpt_path),
+                    device=str(device),
+                    backbone_pretrained=False,
+                )
+                model.eval()
+            except Exception as exc:
+                model_rows.append(
+                    {
+                        "checkpoint": str(ckpt_path),
+                        "run": ckpt_path.parent.name if ckpt_path.parent else None,
+                        "name": ckpt_path.name,
+                        "status": "error",
+                        "error": str(exc),
+                    }
+                )
+                continue
+
+            metric_lists = {
+                "sad": [],
+                "mse": [],
+                "gradient_error": [],
+                "connectivity_error": [],
+            }
+            infer_times_ms: list[float] = []
+
+            with torch.no_grad():
+                for img_path, alpha_path in pairs:
+                    img = Image.open(img_path).convert("RGB")
+                    alpha = Image.open(alpha_path)
+
+                    if alpha.mode == "RGBA":
+                        alpha = alpha.split()[-1]
+                    elif alpha.mode != "L":
+                        alpha = alpha.convert("L")
+
+                    img_resized = img.resize((req.img_size, req.img_size), Image.BILINEAR)
+                    alpha_resized = alpha.resize(
+                        (req.img_size, req.img_size), Image.BILINEAR
+                    )
+
+                    arr = np.array(img_resized).astype(np.float32) / 255.0
+                    arr = (arr - 0.5) / 0.5
+                    tensor = (
+                        torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).to(device)
+                    )
+
+                    t0 = time.perf_counter()
+                    pred = model(tensor, inference=True)
+                    infer_times_ms.append((time.perf_counter() - t0) * 1000.0)
+
+                    matte = pred.squeeze().cpu().numpy()
+                    matte = np.clip(matte, 0.0, 1.0)
+                    gt = np.array(alpha_resized).astype(np.float32) / 255.0
+
+                    m = evaluate_matting(matte, gt)
+                    for key in metric_lists:
+                        metric_lists[key].append(float(m[key]))
+
+            avg_metrics = {
+                key: float(np.mean(vals)) for key, vals in metric_lists.items() if vals
+            }
+            model_rows.append(
+                {
+                    "checkpoint": str(ckpt_path),
+                    "run": ckpt_path.parent.name if ckpt_path.parent else None,
+                    "name": ckpt_path.name,
+                    "status": "ok",
+                    "n_images": len(pairs),
+                    "avg_metrics": avg_metrics,
+                    "avg_inference_ms": float(np.mean(infer_times_ms))
+                    if infer_times_ms
+                    else None,
+                }
+            )
+
+        valid_rows = [r for r in model_rows if r.get("status") == "ok"]
+        if not valid_rows:
+            return {
+                "dataset_id": req.dataset_id,
+                "n_images": len(pairs),
+                "ranked_models": [],
+                "failed_models": model_rows,
+                "score_formula": "score = mean(metric / best_metric_for_that_metric)",
+            }
+
+        metric_keys = ["sad", "mse", "gradient_error", "connectivity_error"]
+        metric_best: dict[str, float] = {}
+        for key in metric_keys:
+            vals = [
+                float(r["avg_metrics"][key])
+                for r in valid_rows
+                if key in r.get("avg_metrics", {})
+            ]
+            metric_best[key] = max(min(vals), 1e-12)
+
+        for row in valid_rows:
+            ratios = [
+                float(row["avg_metrics"][k]) / metric_best[k]
+                for k in metric_keys
+                if k in row.get("avg_metrics", {})
+            ]
+            row["overall_score"] = float(np.mean(ratios)) if ratios else float("inf")
+
+        ranked = sorted(valid_rows, key=lambda r: float(r.get("overall_score", 1e9)))
+        for i, row in enumerate(ranked, start=1):
+            row["rank"] = i
+
+        failed = [r for r in model_rows if r.get("status") != "ok"]
+        return {
+            "dataset_id": req.dataset_id,
+            "n_images": len(pairs),
+            "ranked_models": ranked,
+            "failed_models": failed,
+            "metric_baselines": metric_best,
+            "score_formula": "score = mean(metric / best_metric_for_that_metric)",
+        }
+
+    return await asyncio.to_thread(_benchmark)
+
+
 # ── Helpers ──────────────────────────────────────────────
+def _resolve_dataset_path(dataset_id: str) -> Path:
+    if not dataset_id or not dataset_id.strip():
+        raise HTTPException(status_code=400, detail="Invalid dataset id")
+
+    base = settings.dataset_path.resolve()
+    dataset_path = (base / dataset_id).resolve()
+    if dataset_path == base:
+        raise HTTPException(status_code=400, detail="Invalid dataset id")
+
+    try:
+        dataset_path.relative_to(base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid dataset id") from exc
+
+    return dataset_path
+
+
 def _is_under(path: Path, root: Path) -> bool:
     try:
         path.resolve().relative_to(root.resolve())
