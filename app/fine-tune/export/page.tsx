@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch, apiPost } from "../lib/api";
+import HelpTip from "../components/help-tip";
 
 interface ModelInfo {
     type: string;
@@ -129,12 +130,14 @@ export default function ExportPage() {
                             1
                         </span>
                         Export Checkpoint → ONNX
+                        <HelpTip text="Convierte un checkpoint de PyTorch a ONNX para inferencia portátil." />
                     </h3>
                     <div className="grid grid-cols-3 gap-3">
                         <div className="col-span-2">
-                            <label className="text-xs text-neutral-500 mb-1 block">
-                                Checkpoint
-                            </label>
+                            <div className="text-xs text-neutral-500 mb-1 inline-flex items-center">
+                                <span>Checkpoint</span>
+                                <HelpTip text="Punto de partida entrenado. Selecciona exactamente el checkpoint que quieres exportar." />
+                            </div>
                             <select
                                 value={selectedCkpt}
                                 onChange={(e) => setSelectedCkpt(e.target.value)}
@@ -150,9 +153,10 @@ export default function ExportPage() {
                             </select>
                         </div>
                         <div>
-                            <label className="text-xs text-neutral-500 mb-1 block">
-                                Input Size
-                            </label>
+                            <div className="text-xs text-neutral-500 mb-1 inline-flex items-center">
+                                <span>Input Size</span>
+                                <HelpTip text="Resolución base usada al exportar. Debe coincidir con lo esperado en evaluación/inferencia." />
+                            </div>
                             <input
                                 type="number"
                                 value={exportSize}
@@ -177,12 +181,14 @@ export default function ExportPage() {
                             2
                         </span>
                         Quantize ONNX
+                        <HelpTip text="Reduce tamaño y costo computacional del ONNX para inferencia más rápida." />
                     </h3>
                     <div className="grid grid-cols-3 gap-3">
                         <div className="col-span-2">
-                            <label className="text-xs text-neutral-500 mb-1 block">
-                                ONNX Model
-                            </label>
+                            <div className="text-xs text-neutral-500 mb-1 inline-flex items-center">
+                                <span>ONNX Model</span>
+                                <HelpTip text="Modelo ONNX origen sobre el que se aplicará cuantización." />
+                            </div>
                             <select
                                 value={selectedOnnx}
                                 onChange={(e) => setSelectedOnnx(e.target.value)}
@@ -197,9 +203,10 @@ export default function ExportPage() {
                             </select>
                         </div>
                         <div>
-                            <label className="text-xs text-neutral-500 mb-1 block">
-                                Target
-                            </label>
+                            <div className="text-xs text-neutral-500 mb-1 inline-flex items-center">
+                                <span>Target</span>
+                                <HelpTip text="UINT8: más pequeño/rápido. FP16: mejor precisión relativa, tamaño intermedio." />
+                            </div>
                             <select
                                 value={quantDtype}
                                 onChange={(e) =>
@@ -228,6 +235,7 @@ export default function ExportPage() {
                             3
                         </span>
                         Deploy to Frontend
+                        <HelpTip text="Copia el ONNX elegido al directorio público para usarlo en la demo del navegador." />
                     </h3>
                     <p className="text-xs text-neutral-500 mb-3">
                         Copy the selected ONNX model to{" "}
@@ -237,9 +245,10 @@ export default function ExportPage() {
                         for use in the browser inference demo.
                     </p>
                     <div className="mb-3">
-                        <label className="text-xs text-neutral-500 mb-1 block">
-                            ONNX Model to Deploy
-                        </label>
+                        <div className="text-xs text-neutral-500 mb-1 inline-flex items-center">
+                            <span>ONNX Model to Deploy</span>
+                            <HelpTip text="Modelo ONNX final que quedará disponible en `public/models/modnet/onnx`." />
+                        </div>
                         <select
                             value={selectedOnnx}
                             onChange={(e) => setSelectedOnnx(e.target.value)}

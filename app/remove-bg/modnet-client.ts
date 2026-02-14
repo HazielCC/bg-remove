@@ -9,8 +9,8 @@ async function detectModelDtype(variant: Variant): Promise<'fp32' | 'fp16' | 'ui
   if (variant === 'fp16') return 'fp16';
   if (variant === 'uint8') return 'uint8';
 
-  // auto: default to quantized for faster loading
-  return 'quantized' as any;
+  // auto: default to uint8 for faster loading and compatibility with transformers.js
+  return 'uint8';
 }
 
 export async function createSegmenter(options?: { variant?: Variant }) {

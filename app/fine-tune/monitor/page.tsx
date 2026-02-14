@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch, apiPost, createMetricsStream } from "../lib/api";
+import HelpTip from "../components/help-tip";
 
 interface EpochMetric {
     epoch: number;
@@ -145,6 +146,16 @@ export default function MonitorPage() {
                     <p className="text-sm text-neutral-500">
                         Real-time training metrics via SSE
                     </p>
+                    <div className="mt-1 flex items-center gap-3 text-xs text-neutral-500">
+                        <span className="inline-flex items-center">
+                            Connect
+                            <HelpTip text="Abre el stream SSE para recibir métricas en vivo desde el backend." />
+                        </span>
+                        <span className="inline-flex items-center">
+                            Stop
+                            <HelpTip text="Solicita detener el entrenamiento actual. El cambio puede tardar unos segundos." />
+                        </span>
+                    </div>
                 </div>
                 <div className="flex gap-2">
                     <button
@@ -184,14 +195,17 @@ export default function MonitorPage() {
                     <StatusCard
                         label="Loss"
                         value={status.total_loss.toFixed(4)}
+                        tooltip="Pérdida total del último epoch reportado."
                     />
                     <StatusCard
                         label="Val Loss"
                         value={status.val_loss.toFixed(4)}
+                        tooltip="Pérdida en validación. Mejor para comparar calidad entre epochs."
                     />
                     <StatusCard
                         label="ETA"
                         value={formatTime(status.eta_seconds)}
+                        tooltip="Tiempo estimado restante según la velocidad de epochs previos."
                     />
                 </div>
             )}
@@ -285,9 +299,21 @@ export default function MonitorPage() {
             {/* ── Learning Rate + Validation ───────────────── */}
             {status && (
                 <div className="grid grid-cols-3 gap-3 mt-4">
-                    <StatusCard label="Learning Rate" value={status.lr.toExponential(2)} />
-                    <StatusCard label="Best Val Loss" value={status.best_val_loss != null && status.best_val_loss !== Infinity ? status.best_val_loss.toFixed(4) : "—"} />
-                    <StatusCard label="Elapsed" value={formatTime(status.elapsed_seconds)} />
+                    <StatusCard
+                        label="Learning Rate"
+                        value={status.lr.toExponential(2)}
+                        tooltip="Learning rate actual aplicado por el scheduler."
+                    />
+                    <StatusCard
+                        label="Best Val Loss"
+                        value={status.best_val_loss != null && status.best_val_loss !== Infinity ? status.best_val_loss.toFixed(4) : "—"}
+                        tooltip="Mejor valor de validación observado en la corrida."
+                    />
+                    <StatusCard
+                        label="Elapsed"
+                        value={formatTime(status.elapsed_seconds)}
+                        tooltip="Tiempo total transcurrido desde el inicio del entrenamiento."
+                    />
                 </div>
             )}
 
@@ -336,15 +362,20 @@ function StatusCard({
     label,
     value,
     color,
+    tooltip,
 }: {
     label: string;
     value: string;
     color?: string;
+    tooltip?: string;
 }) {
     return (
         <div className="bg-neutral-50 dark:bg-neutral-800 border dark:border-neutral-700 rounded-lg p-3 text-center">
             <div className={`text-lg font-bold ${color || ""}`}>{value}</div>
-            <div className="text-[10px] text-neutral-500 mt-0.5">{label}</div>
+            <div className="mt-0.5 inline-flex items-center justify-center text-[10px] text-neutral-500">
+                {label}
+                {tooltip && <HelpTip text={tooltip} />}
+            </div>
         </div>
     );
 }

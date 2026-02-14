@@ -193,22 +193,7 @@ class FusionBranch(nn.Module):
             lr_feat, size=(h, w), mode="bilinear", align_corners=False
         )
         lr_up = self.conv_lr(lr_up)
-        x = torch.cat(
-            [
-                (
-                    pred_semantic.expand(-1, -1, h, w)
-                    if pred_semantic.shape[2:] != (h, w)
-                    else pred_semantic
-                ),
-                pred_detail,
-                lr_up,
-            ],
-            dim=1,
-        )
-        # Ensure semantic is upsampled if needed
-        if x.shape[2:] != (h, w):
-            x = F.interpolate(x, size=(h, w), mode="bilinear", align_corners=False)
-        # Re-concat properly
+
         sem_up = (
             F.interpolate(
                 pred_semantic, size=(h, w), mode="bilinear", align_corners=False

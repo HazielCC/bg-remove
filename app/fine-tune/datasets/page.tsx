@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiDelete, apiFetch, apiPost } from "../lib/api";
+import HelpTip from "../components/help-tip";
 
 // ── Types ───────────────────────────────────────────────
 interface DatasetInfo {
@@ -218,6 +219,7 @@ export default function DatasetsPage() {
             <h1 className="text-2xl font-bold mb-1">Dataset Manager</h1>
             <p className="text-sm text-neutral-500 mb-6">
                 Search, download and curate matting datasets from HuggingFace
+                <HelpTip text="Preview muestra ejemplos del dataset. Curate valida calidad de alpha/resolución y genera un reporte de problemas." />
             </p>
 
             {/* Tabs */}
@@ -314,16 +316,25 @@ export default function DatasetsPage() {
                     )}
 
                     <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                            placeholder="Search datasets (e.g., matting human portrait)..."
-                            className="flex-1 border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
-                        />
+                        <div className="flex-1">
+                            <div className="mb-1 inline-flex items-center text-xs text-neutral-500">
+                                <span>Query</span>
+                                <HelpTip text="Busca datasets en HuggingFace. Usa términos como 'matting', 'portrait', 'segmentation'." />
+                            </div>
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                                placeholder="Search datasets (e.g., matting human portrait)..."
+                                className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
+                            />
+                        </div>
                         <div className="flex items-center gap-1">
-                            <label className="text-xs text-neutral-500">Max:</label>
+                            <div className="text-xs text-neutral-500 inline-flex items-center">
+                                <span>Max:</span>
+                                <HelpTip text="Límite máximo de muestras a descargar para controlar tiempo y espacio en disco." />
+                            </div>
                             <input
                                 type="number"
                                 value={downloadMax}
@@ -461,6 +472,7 @@ export default function DatasetsPage() {
                                             >
                                                 Delete
                                             </button>
+                                            <HelpTip text="Preview: muestra ejemplos y stats. Curate: revisa calidad de máscaras alpha y resolución mínima." />
                                         </div>
                                     </div>
                                 </div>

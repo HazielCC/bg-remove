@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch, apiPost, apiUpload } from "../lib/api";
+import HelpTip from "../components/help-tip";
 
 interface ModelInfo {
     type: string;
@@ -109,7 +110,10 @@ export default function ComparePage() {
             {/* ── Model Selection ──────────────────────────── */}
             <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className="border rounded-lg p-4 dark:border-neutral-700">
-                    <label className="block text-sm font-medium mb-1">Modelo A</label>
+                    <div className="mb-1 inline-flex items-center">
+                        <label className="block text-sm font-medium">Modelo A</label>
+                        <HelpTip text="Modelo de referencia (baseline). Se compara contra el Modelo B en las mismas imágenes." />
+                    </div>
                     <select
                         value={modelA}
                         onChange={(e) => setModelA(e.target.value)}
@@ -125,7 +129,10 @@ export default function ComparePage() {
                     </select>
                 </div>
                 <div className="border rounded-lg p-4 dark:border-neutral-700">
-                    <h3 className="text-sm font-semibold mb-2">Modelo B</h3>
+                    <h3 className="text-sm font-semibold mb-2 inline-flex items-center">
+                        Modelo B
+                        <HelpTip text="Modelo candidato (normalmente fine-tuned). Revisa diferencias visuales con Modelo A." />
+                    </h3>
                     <select
                         value={modelB}
                         onChange={(e) => setModelB(e.target.value)}
@@ -151,6 +158,9 @@ export default function ComparePage() {
                 >
                     {loading ? "Comparando..." : "Comparar en Dataset"}
                 </button>
+                <span className="inline-flex items-center text-xs text-neutral-500">
+                    <HelpTip text="Ejecuta ambos modelos sobre un lote de imágenes del dataset local para comparación rápida." />
+                </span>
 
                 <div className="flex items-center gap-2">
                     <input
@@ -166,6 +176,7 @@ export default function ComparePage() {
                     >
                         Compare Custom Image
                     </button>
+                    <HelpTip text="Procesa tu propia imagen con ambos modelos para inspección visual directa." />
                 </div>
             </div>
 

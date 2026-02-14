@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiFetch, apiPost } from "../lib/api";
+import HelpTip from "../components/help-tip";
 
 interface DatasetInfo {
     id: string;
@@ -88,7 +89,10 @@ export default function TrainPage() {
 
             <div className="space-y-6">
                 {/* ── Dataset ──────────────────────────────────── */}
-                <Section title="Dataset">
+                <Section
+                    title="Dataset"
+                    help="Dataset local con pares imagen/alpha. Si no existe, descárgalo primero en la pestaña Datasets."
+                >
                     <label className="block text-sm font-medium mb-1">Dataset</label>
                     <select
                         value={form.dataset_id}
@@ -105,7 +109,10 @@ export default function TrainPage() {
                 </Section>
 
                 {/* ── Stage ────────────────────────────────────── */}
-                <Section title="Etapa de Entrenamiento">
+                <Section
+                    title="Etapa de Entrenamiento"
+                    help="Supervisado usa ground-truth alpha. SOC es adaptación auto-supervisada para ajustar el modelo con menos etiquetas."
+                >
                     <div className="flex gap-3">
                         {[
                             {
@@ -144,7 +151,10 @@ export default function TrainPage() {
                 </Section>
 
                 {/* ── Hyperparameters ─────────────────────────── */}
-                <Section title="Hiperparámetros">
+                <Section
+                    title="Hiperparámetros"
+                    help="Ajustan velocidad/estabilidad. LR alto puede divergir; batch mayor consume más memoria."
+                >
                     <div className="grid grid-cols-2 gap-4">
                         <Field
                             label={isSoc ? "SOC Epochs" : "Epochs"}
@@ -158,6 +168,7 @@ export default function TrainPage() {
                             value={isSoc ? form.soc_lr : form.lr}
                             onChange={(v) => update(isSoc ? "soc_lr" : "lr", Number(v))}
                             step="0.0001"
+                            tooltip="Tamaño del paso de optimización. Si la pérdida sube mucho, bájalo."
                         />
                         <Field
                             label="Batch Size"
@@ -165,6 +176,7 @@ export default function TrainPage() {
                             value={form.batch_size}
                             onChange={(v) => update("batch_size", Number(v))}
                             hint="Use 2-4 for MPS"
+                            tooltip="Número de imágenes por iteración. Más batch = más VRAM/RAM."
                         />
                         <Field
                             label="Image Size"
@@ -172,6 +184,7 @@ export default function TrainPage() {
                             value={form.img_size}
                             onChange={(v) => update("img_size", Number(v))}
                             hint="512 recommended"
+                            tooltip="Resolución cuadrada de entrenamiento. Mayor tamaño mejora detalle, pero aumenta costo."
                         />
                         <Field
                             label="Validation Split"
@@ -180,19 +193,24 @@ export default function TrainPage() {
                             onChange={(v) => update("val_split", Number(v))}
                             step="0.05"
                             hint="0.1 = 10%"
+                            tooltip="Porcentaje reservado para validación, no se usa para actualizar pesos."
                         />
                         <Field
                             label="Save Every N Epochs"
                             type="number"
                             value={form.save_every}
                             onChange={(v) => update("save_every", Number(v))}
+                            tooltip="Frecuencia de guardado de checkpoints además del mejor modelo."
                         />
                     </div>
                 </Section>
 
                 {/* ── Loss Weights (supervised only) ──────────── */}
                 {!isSoc && (
-                    <Section title="Pesos de Pérdida">
+                    <Section
+                        title="Pesos de Pérdida"
+                        help="Balancea qué tanto importa cada componente de pérdida durante el entrenamiento supervisado."
+                    >
                         <div className="grid grid-cols-3 gap-4">
                             <Field
                                 label="Semantic"
@@ -217,7 +235,10 @@ export default function TrainPage() {
                 )}
 
                 {/* ── Model ────────────────────────────────────── */}
-                <Section title="Modelo Base">
+                <Section
+                    title="Modelo Base"
+                    help="Checkpoint inicial desde el que partes. Vacío usa un modelo nuevo con backbone ImageNet."
+                >
                     <label className="block text-sm font-medium mb-1">
                         Pretrained Checkpoint (optional)
                     </label>
@@ -238,7 +259,10 @@ export default function TrainPage() {
                 </Section>
 
                 {/* ── Run Name ─────────────────────────────────── */}
-                <Section title="Run">
+                <Section
+                    title="Run"
+                    help="Nombre único de esta corrida. Se usa para crear la carpeta de checkpoints."
+                >
                     <Field
                         label="Nombre de Ejecución"
                         value={form.run_name}
@@ -276,16 +300,21 @@ export default function TrainPage() {
 // ── Reusable components ─────────────────────────────────
 function Section({
     title,
+    help,
     children,
 }: {
     title: string;
+    help?: string;
     children: React.ReactNode;
 }) {
     return (
         <div className="border rounded-lg p-4 dark:border-neutral-700">
-            <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-3">
-                {title}
-            </h3>
+            <div className="flex items-center mb-3">
+                <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+                    {title}
+                </h3>
+                {help && <HelpTip text={help} />}
+            </div>
             {children}
         </div>
     );
@@ -298,6 +327,7 @@ function Field({
     type = "text",
     hint,
     step,
+    tooltip,
 }: {
     label: string;
     value: string | number;
@@ -305,12 +335,16 @@ function Field({
     type?: string;
     hint?: string;
     step?: string;
+    tooltip?: string;
 }) {
     return (
         <div>
-            <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-1">
-                {label}
-            </label>
+            <div className="flex items-center mb-1">
+                <label className="block text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                    {label}
+                </label>
+                {tooltip && <HelpTip text={tooltip} />}
+            </div>
             <input
                 type={type}
                 value={value}
