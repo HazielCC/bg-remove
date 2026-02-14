@@ -333,6 +333,7 @@ def run_supervised_training(
             model.train()
             epoch_losses = {"semantic": 0, "detail": 0, "matte": 0, "total": 0}
             n_batches = 0
+            total_batches = len(train_loader)
 
             for batch_idx, (imgs, trimaps, alphas) in enumerate(train_loader):
                 if _stop_flag:
@@ -370,6 +371,25 @@ def run_supervised_training(
                 epoch_losses["matte"] += mat_loss.item()
                 epoch_losses["total"] += loss.item()
                 n_batches += 1
+
+                current_batch = batch_idx + 1
+                batch_report_every = max(1, total_batches // 8)
+                if (
+                    current_batch == 1
+                    or current_batch == total_batches
+                    or current_batch % batch_report_every == 0
+                ):
+                    _send_event(
+                        {
+                            "type": "batch_progress",
+                            "epoch": epoch,
+                            "total_epochs": config.epochs,
+                            "batch": current_batch,
+                            "total_batches": total_batches,
+                            "batch_loss": loss.item(),
+                            "elapsed_seconds": time.time() - start_time,
+                        }
+                    )
 
             if _stop_flag:
                 training_state.status = "stopped"
@@ -525,6 +545,7 @@ def run_soc_adaptation(
 
             total_loss = 0
             n = 0
+            total_batches = len(loader)
             for imgs in loader:
                 if _stop_flag:
                     break
@@ -574,6 +595,25 @@ def run_soc_adaptation(
 
                 total_loss += loss.item()
                 n += 1
+
+                current_batch = n
+                batch_report_every = max(1, total_batches // 8)
+                if (
+                    current_batch == 1
+                    or current_batch == total_batches
+                    or current_batch % batch_report_every == 0
+                ):
+                    _send_event(
+                        {
+                            "type": "batch_progress",
+                            "epoch": epoch,
+                            "total_epochs": epochs,
+                            "batch": current_batch,
+                            "total_batches": total_batches,
+                            "batch_loss": loss.item(),
+                            "elapsed_seconds": time.time() - start_time,
+                        }
+                    )
 
             if _stop_flag:
                 training_state.status = "stopped"

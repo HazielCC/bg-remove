@@ -16,6 +16,15 @@ interface EpochMetric {
     eta_seconds?: number;
 }
 
+interface BatchProgress {
+    epoch: number;
+    total_epochs: number;
+    batch: number;
+    total_batches: number;
+    batch_loss?: number;
+    elapsed_seconds?: number;
+}
+
 interface TrainingStatus {
     status: string;
     epoch: number;
@@ -33,65 +42,146 @@ interface TrainingStatus {
     error_message: string;
 }
 
+function makeEmptyStatus(): TrainingStatus {
+    return {
+        status: "idle",
+        epoch: 0,
+        total_epochs: 0,
+        total_loss: 0,
+        semantic_loss: 0,
+        detail_loss: 0,
+        matte_loss: 0,
+        val_loss: 0,
+        lr: 0,
+        samples_processed: 0,
+        elapsed_seconds: 0,
+        eta_seconds: 0,
+        best_val_loss: Infinity,
+        error_message: "",
+    };
+}
+
 export default function MonitorPage() {
     const [status, setStatus] = useState<TrainingStatus | null>(null);
     const [metrics, setMetrics] = useState<EpochMetric[]>([]);
+    const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
     const [logs, setLogs] = useState<string[]>([]);
     const [connected, setConnected] = useState(false);
     const sourceRef = useRef<EventSource | null>(null);
     const logsEndRef = useRef<HTMLDivElement>(null);
 
+    const appendLog = useCallback((line: string) => {
+        setLogs((prev) => [...prev.slice(-249), line]);
+    }, []);
+
     // Fetch initial status
     useEffect(() => {
-        apiFetch<TrainingStatus>("/training/status").then(setStatus).catch(console.error);
+        apiFetch<TrainingStatus>("/training/status")
+            .then(setStatus)
+            .catch(console.error);
     }, []);
 
     // Connect to SSE
-    const connect = useCallback(() => {
+    const connect = useCallback((mode: "manual" | "auto" = "manual") => {
         if (sourceRef.current) {
             sourceRef.current.close();
+            sourceRef.current = null;
         }
 
         const source = createMetricsStream(
             (data) => {
                 const type = data.type as string;
 
+                if (type === "status") {
+                    const streamStatus = String(data.status ?? "idle");
+                    setStatus((prev) => ({
+                        ...(prev ?? makeEmptyStatus()),
+                        status: streamStatus,
+                    }));
+                    return;
+                }
+
+                if (type === "batch_progress") {
+                    const b = data as unknown as BatchProgress;
+                    setBatchProgress(b);
+                    setStatus((prev) => ({
+                        ...(prev ?? makeEmptyStatus()),
+                        status: "running",
+                        epoch: b.epoch,
+                        total_epochs: b.total_epochs,
+                        total_loss: b.batch_loss ?? prev?.total_loss ?? 0,
+                        elapsed_seconds: b.elapsed_seconds ?? prev?.elapsed_seconds ?? 0,
+                    }));
+
+                    if (b.batch === 1 || b.batch === b.total_batches) {
+                        appendLog(
+                            `[Epoch ${b.epoch}] batch ${b.batch}/${b.total_batches} loss=${(b.batch_loss ?? 0).toFixed(4)}`
+                        );
+                    }
+                    return;
+                }
+
                 if (type === "epoch_end") {
                     const m = data as unknown as EpochMetric;
+                    setBatchProgress(null);
                     setMetrics((prev) => [...prev, m]);
-                    setLogs((prev) => [
-                        ...prev,
-                        `[Epoch ${m.epoch}] loss=${(m.total_loss ?? 0).toFixed(4)} val=${(m.val_loss ?? 0).toFixed(4)} lr=${(m.lr ?? 0).toFixed(6)}`,
-                    ]);
-                    // Update status
-                    setStatus((prev) =>
-                        prev
-                            ? {
-                                ...prev,
-                                epoch: m.epoch,
-                                total_loss: m.total_loss ?? 0,
-                                semantic_loss: m.semantic_loss ?? 0,
-                                detail_loss: m.detail_loss ?? 0,
-                                matte_loss: m.matte_loss ?? 0,
-                                val_loss: m.val_loss ?? 0,
-                                lr: m.lr ?? 0,
-                                elapsed_seconds: m.elapsed_seconds ?? 0,
-                                eta_seconds: m.eta_seconds ?? 0,
-                                status: "running",
-                            }
-                            : prev
+                    appendLog(
+                        `[Epoch ${m.epoch}] loss=${(m.total_loss ?? 0).toFixed(4)} val=${(m.val_loss ?? 0).toFixed(4)} lr=${(m.lr ?? 0).toFixed(6)}`
                     );
-                } else if (type === "heartbeat") {
-                    // just keep alive
-                } else if (type === "finished") {
-                    setLogs((prev) => [...prev, `Training finished! Best val loss: ${data.best_val_loss}`]);
-                    setStatus((prev) => (prev ? { ...prev, status: "finished" } : prev));
-                } else if (type === "error") {
-                    setLogs((prev) => [...prev, `ERROR: ${data.message}`]);
-                    setStatus((prev) => (prev ? { ...prev, status: "error" } : prev));
-                } else if (type === "stopped") {
-                    setLogs((prev) => [...prev, "Training stopped by user"]);
-                    setStatus((prev) => (prev ? { ...prev, status: "stopped" } : prev));
+                    setStatus((prev) => ({
+                        ...(prev ?? makeEmptyStatus()),
+                        status: "running",
+                        epoch: m.epoch,
+                        total_loss: m.total_loss ?? 0,
+                        semantic_loss: m.semantic_loss ?? 0,
+                        detail_loss: m.detail_loss ?? 0,
+                        matte_loss: m.matte_loss ?? 0,
+                        val_loss: m.val_loss ?? 0,
+                        lr: m.lr ?? 0,
+                        elapsed_seconds: m.elapsed_seconds ?? 0,
+                        eta_seconds: m.eta_seconds ?? 0,
+                    }));
+                    return;
+                }
+
+                if (type === "heartbeat") {
+                    const heartbeatStatus = String(data.status ?? "idle");
+                    setStatus((prev) => ({
+                        ...(prev ?? makeEmptyStatus()),
+                        status: heartbeatStatus,
+                        epoch: Number(data.epoch ?? prev?.epoch ?? 0),
+                    }));
+                    return;
+                }
+
+                if (type === "finished") {
+                    setBatchProgress(null);
+                    appendLog(`Training finished! Best val loss: ${data.best_val_loss}`);
+                    setStatus((prev) => ({
+                        ...(prev ?? makeEmptyStatus()),
+                        status: "finished",
+                    }));
+                    return;
+                }
+
+                if (type === "error") {
+                    setBatchProgress(null);
+                    appendLog(`ERROR: ${data.message}`);
+                    setStatus((prev) => ({
+                        ...(prev ?? makeEmptyStatus()),
+                        status: "error",
+                        error_message: String(data.message ?? ""),
+                    }));
+                    return;
+                }
+
+                if (type === "stopped") {
+                    setBatchProgress(null);
+                    appendLog("Training stopped by user");
+                    setStatus((prev) => ({
+                        ...(prev ?? makeEmptyStatus()),
+                        status: "stopped",
+                    }));
                 }
             },
             () => {
@@ -99,19 +189,25 @@ export default function MonitorPage() {
             }
         );
 
-        sourceRef.current = source;
-        setConnected(true);
-    }, []);
+        source.onopen = () => {
+            setConnected(true);
+            if (mode === "manual") {
+                appendLog("SSE connected");
+            }
+        };
 
-    // Cleanup SSE connection on unmount
+        sourceRef.current = source;
+    }, [appendLog]);
+
     useEffect(() => {
+        connect("auto");
         return () => {
             if (sourceRef.current) {
                 sourceRef.current.close();
                 sourceRef.current = null;
             }
         };
-    }, []);
+    }, [connect]);
 
     // Auto-scroll logs
     useEffect(() => {
@@ -122,7 +218,7 @@ export default function MonitorPage() {
     const handleStop = async () => {
         try {
             await apiPost("/training/stop", {});
-            setLogs((prev) => [...prev, "Stop requested..."]);
+            appendLog("Stop requested...");
         } catch (e) {
             console.error(e);
         }
@@ -137,6 +233,14 @@ export default function MonitorPage() {
     const maxLoss = metrics.length
         ? Math.max(...metrics.map((m) => m.total_loss || 0)) * 1.1
         : 1;
+    const epochProgressPct =
+        status && status.total_epochs > 0
+            ? Math.min((status.epoch / status.total_epochs) * 100, 100)
+            : 0;
+    const batchProgressPct =
+        batchProgress && batchProgress.total_batches > 0
+            ? Math.min((batchProgress.batch / batchProgress.total_batches) * 100, 100)
+            : 0;
 
     return (
         <div className="p-6 max-w-6xl">
@@ -148,8 +252,8 @@ export default function MonitorPage() {
                     </p>
                     <div className="mt-1 flex items-center gap-3 text-xs text-neutral-500">
                         <span className="inline-flex items-center">
-                            Connect
-                            <HelpTip text="Abre el stream SSE para recibir métricas en vivo desde el backend." />
+                            Live Stream
+                            <HelpTip text="El monitor se conecta automáticamente al stream SSE para recibir métricas en vivo." />
                         </span>
                         <span className="inline-flex items-center">
                             Stop
@@ -159,11 +263,11 @@ export default function MonitorPage() {
                 </div>
                 <div className="flex gap-2">
                     <button
-                        onClick={connect}
+                        onClick={() => connect("manual")}
                         disabled={connected}
                         className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50"
                     >
-                        {connected ? "Connected" : "Connect"}
+                        {connected ? "Connected" : "Reconnect"}
                     </button>
                     <button
                         onClick={handleStop}
@@ -207,6 +311,39 @@ export default function MonitorPage() {
                         value={formatTime(status.eta_seconds)}
                         tooltip="Tiempo estimado restante según la velocidad de epochs previos."
                     />
+                </div>
+            )}
+
+            {status && status.total_epochs > 0 && (
+                <div className="mb-6 space-y-3">
+                    <div>
+                        <div className="flex items-center justify-between text-xs text-neutral-500 mb-1">
+                            <span>Progreso por época</span>
+                            <span>{status.epoch}/{status.total_epochs} ({epochProgressPct.toFixed(0)}%)</span>
+                        </div>
+                        <div className="h-2 w-full rounded-full bg-neutral-200 dark:bg-neutral-700 overflow-hidden">
+                            <div
+                                className="h-2 rounded-full bg-blue-500 transition-all"
+                                style={{ width: `${Math.max(epochProgressPct, 0)}%` }}
+                            />
+                        </div>
+                    </div>
+                    {batchProgress && (
+                        <div>
+                            <div className="flex items-center justify-between text-xs text-neutral-500 mb-1">
+                                <span>Progreso del batch actual (Epoch {batchProgress.epoch})</span>
+                                <span>
+                                    {batchProgress.batch}/{batchProgress.total_batches} ({batchProgressPct.toFixed(0)}%)
+                                </span>
+                            </div>
+                            <div className="h-2 w-full rounded-full bg-neutral-200 dark:bg-neutral-700 overflow-hidden">
+                                <div
+                                    className="h-2 rounded-full bg-emerald-500 transition-all"
+                                    style={{ width: `${Math.max(batchProgressPct, 0)}%` }}
+                                />
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -333,7 +470,7 @@ export default function MonitorPage() {
                 <div className="h-48 overflow-y-auto p-3 font-mono text-xs space-y-0.5 bg-neutral-900 text-neutral-300">
                     {logs.length === 0 && (
                         <span className="text-neutral-600">
-                            Click &ldquo;Connect&rdquo; to start receiving metrics...
+                            Waiting for training events...
                         </span>
                     )}
                     {logs.map((line, i) => (

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch, apiPost } from "../lib/api";
 import HelpTip from "../components/help-tip";
+import Link from "next/link";
 
 interface DatasetInfo {
     id: string;
@@ -296,14 +297,24 @@ export default function TrainPage() {
                     </button>
 
                     {result && (
-                        <span
-                            className={`text-sm ${result.startsWith("Error")
-                                ? "text-error"
-                                : "text-success"
-                                }`}
-                        >
-                            {result}
-                        </span>
+                        <div className="flex items-center gap-3">
+                            <span
+                                className={`text-sm ${result.startsWith("Error")
+                                    ? "text-error"
+                                    : "text-success"
+                                    }`}
+                            >
+                                {result}
+                            </span>
+                            {!result.startsWith("Error") && (
+                                <Link
+                                    href="/fine-tune/monitor"
+                                    className="text-sm text-blue-600 hover:text-blue-500 underline underline-offset-4"
+                                >
+                                    Ver monitor en vivo
+                                </Link>
+                            )}
+                        </div>
                     )}
                 </div>
             </div>
