@@ -38,7 +38,7 @@ export default function ComparePage() {
         apiFetch<ModelInfo[]>("/models/list").then(setModels).catch(console.error);
     }, []);
 
-    const checkpoints = models.filter((m) => m.type === "checkpoint" || m.type === "pretrained");
+    const checkpoints = models.filter((m) => m.type === "checkpoint" || m.type === "pretrained" || m.type === "onnx");
 
     // ── Compare on dataset images ─────────────────────────
     const handleCompare = async () => {

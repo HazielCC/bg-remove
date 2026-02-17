@@ -242,26 +242,28 @@ async def training_status():
 # ── List Checkpoints ────────────────────────────────────
 @router.get("/checkpoints")
 async def list_checkpoints():
-    """List all saved checkpoints."""
+    """List all saved checkpoints (sorted by newest)."""
     ckpt_dir = settings.checkpoint_path
     if not ckpt_dir.exists():
         return []
 
     checkpoints = []
-    for run_dir in sorted(ckpt_dir.iterdir()):
+    for run_dir in ckpt_dir.iterdir():
         if not run_dir.is_dir():
             continue
-        for ckpt in sorted(run_dir.glob("*.ckpt")):
+        for ckpt in run_dir.glob("*.ckpt"):
+            stat = ckpt.stat()
             checkpoints.append(
                 {
                     "run": run_dir.name,
                     "name": ckpt.name,
                     "path": str(ckpt),
-                    "size_mb": round(ckpt.stat().st_size / (1024 * 1024), 2),
-                    "modified": ckpt.stat().st_mtime,
+                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                    "modified": stat.st_mtime,
                 }
             )
 
+    checkpoints.sort(key=lambda x: x["modified"], reverse=True)
     return checkpoints
 
 

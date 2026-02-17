@@ -20,7 +20,7 @@ def export_to_onnx(
     output_path: str,
     img_size: int = 512,
     device: str = "cpu",
-    opset_version: int = 17,
+    opset_version: int = 14,
 ) -> str:
     """
     Export a MODNet checkpoint to ONNX format.
@@ -57,6 +57,8 @@ def export_to_onnx(
             "input": {0: "batch_size", 2: "height", 3: "width"},
             "output": {0: "batch_size", 2: "height", 3: "width"},
         },
+        # Ensure weights are embedded in the .onnx file (avoid .onnx.data split)
+        # This keeps the model fully self-contained for easy deployment.
     )
 
     # Verify

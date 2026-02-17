@@ -54,36 +54,40 @@ class BenchmarkRequest(BaseModel):
 # ── List Models ──────────────────────────────────────────
 @router.get("/list")
 async def list_models():
-    """List all available models: checkpoints + exported ONNX."""
+    """List all available models: checkpoints + exported ONNX (sorted by newest)."""
     models = []
 
     # Checkpoints
     ckpt_dir = settings.checkpoint_path
     if ckpt_dir.exists():
-        for run_dir in sorted(ckpt_dir.iterdir()):
+        for run_dir in ckpt_dir.iterdir():
             if not run_dir.is_dir():
                 continue
-            for ckpt in sorted(run_dir.glob("*.ckpt")):
+            for ckpt in run_dir.glob("*.ckpt"):
+                stat = ckpt.stat()
                 models.append(
                     {
                         "type": "checkpoint",
                         "run": run_dir.name,
                         "name": ckpt.name,
                         "path": str(ckpt),
-                        "size_mb": round(ckpt.stat().st_size / (1024 * 1024), 2),
+                        "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                        "modified": stat.st_mtime,
                     }
                 )
 
     # Exported ONNX
     export_dir = settings.export_path
     if export_dir.exists():
-        for onnx_file in sorted(export_dir.rglob("*.onnx")):
+        for onnx_file in export_dir.rglob("*.onnx"):
+            stat = onnx_file.stat()
             models.append(
                 {
                     "type": "onnx",
                     "name": onnx_file.name,
                     "path": str(onnx_file),
-                    "size_mb": round(onnx_file.stat().st_size / (1024 * 1024), 2),
+                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                    "modified": stat.st_mtime,
                 }
             )
 
@@ -91,14 +95,19 @@ async def list_models():
     pretrained_dir = settings.model_path
     if pretrained_dir.exists():
         for ckpt in pretrained_dir.glob("*.ckpt"):
+            stat = ckpt.stat()
             models.append(
                 {
                     "type": "pretrained",
                     "name": ckpt.name,
                     "path": str(ckpt),
-                    "size_mb": round(ckpt.stat().st_size / (1024 * 1024), 2),
+                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                    "modified": stat.st_mtime,
                 }
             )
+
+    # Sort by modified time descending (newest first)
+    models.sort(key=lambda x: x["modified"], reverse=True)
 
     return models
 
@@ -516,6 +525,54 @@ async def benchmark_models(req: BenchmarkRequest):
         }
 
     return await asyncio.to_thread(_benchmark)
+
+
+class DeleteRequest(BaseModel):
+    path: str
+
+
+@router.post("/delete")
+async def delete_model(req: DeleteRequest):
+    """Delete a model file. Restricted to checkpoints/ and exports/."""
+    path = Path(req.path).resolve()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Security check: MUST be under checkpoints/ or exports/
+    is_checkpoint = _is_under(path, settings.checkpoint_path)
+    is_export = _is_under(path, settings.export_path)
+    is_pretrained = _is_under(path, settings.model_path)
+
+    if is_pretrained:
+        raise HTTPException(
+            status_code=403, detail="Cannot delete pretrained base models"
+        )
+
+    if not (is_checkpoint or is_export):
+        raise HTTPException(
+            status_code=403,
+            detail="Can only delete files in checkpoints/ or exports/ directories",
+        )
+
+    try:
+        if path.is_file():
+            # If deleting an ONNX model, also look for associated .data file (from large models)
+            if path.suffix == ".onnx":
+                data_file = path.with_name(path.name + ".data")
+                if data_file.exists():
+                    data_file.unlink()
+
+            path.unlink()
+        elif path.is_dir():
+            # Only allow deleting empty run directories if needed,
+            # but usually we delete specific .ckpt files.
+            # If user wants to delete a whole run, that's a different feature.
+            # For now, let's assume file deletion.
+            raise HTTPException(status_code=400, detail="Path is a directory")
+            
+        return {"status": "deleted", "path": str(path)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Helpers ──────────────────────────────────────────────

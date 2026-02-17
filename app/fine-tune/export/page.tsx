@@ -10,6 +10,7 @@ interface ModelInfo {
     name: string;
     path: string;
     size_mb: number;
+    modified?: number;
 }
 
 export default function ExportPage() {
@@ -38,6 +39,12 @@ export default function ExportPage() {
 
     const addLog = (msg: string) => {
         setLog((prev) => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+    };
+
+    const isNew = (timestamp?: number) => {
+        if (!timestamp) return false;
+        // Check if modified within last 30 minutes (1800 seconds)
+        return Date.now() / 1000 - timestamp < 1800;
     };
 
     // ── Export to ONNX ────────────────────────────────────
@@ -112,6 +119,30 @@ export default function ExportPage() {
             addLog(`ERROR: ${(e as Error).message}`);
         } finally {
             setLoading(false);
+        }
+    };
+
+    // ── Delete ────────────────────────────────────────────
+    const handleDelete = async (m: ModelInfo) => {
+        if (m.type === "pretrained") {
+            alert("No se pueden eliminar los modelos base.");
+            return;
+        }
+        if (!confirm(`¿Estás seguro de que deseas eliminar ${m.name}? Esta acción no se puede deshacer.`)) {
+            return;
+        }
+
+        try {
+            await apiPost("/models/delete", { path: m.path });
+            addLog(`Deleted: ${m.name}`);
+            
+            // Clear selection if deleted item was selected
+            if (selectedCkpt === m.path) setSelectedCkpt("");
+            if (selectedOnnx === m.path) setSelectedOnnx("");
+            
+            fetchModels();
+        } catch (e) {
+            addLog(`ERROR deleting ${m.name}: ${(e as Error).message}`);
         }
     };
 
@@ -284,15 +315,21 @@ export default function ExportPage() {
                                     <th className="pb-2">Type</th>
                                     <th className="pb-2">Run</th>
                                     <th className="pb-2 text-right">Size</th>
+                                    <th className="pb-2 text-right w-16">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {models.map((m) => (
                                     <tr
                                         key={m.path}
-                                        className="border-b dark:border-neutral-800"
+                                        className="border-b dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900/50"
                                     >
-                                        <td className="py-2 font-mono text-xs">{m.name}</td>
+                                        <td className="py-2 font-mono text-xs">
+                                            {m.name}
+                                            {isNew(m.modified) && (
+                                                <span className="ml-2 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-sans font-medium">New!</span>
+                                            )}
+                                        </td>
                                         <td className="py-2">
                                             <span
                                                 className={`text-xs px-2 py-0.5 rounded-full ${m.type === "onnx"
@@ -307,6 +344,28 @@ export default function ExportPage() {
                                         </td>
                                         <td className="py-2 text-neutral-500">{m.run || "—"}</td>
                                         <td className="py-2 text-right">{m.size_mb} MB</td>
+                                        <td className="py-2 text-right">
+                                            {m.type !== "pretrained" && (
+                                                <button
+                                                    onClick={() => handleDelete(m)}
+                                                    className="text-neutral-400 hover:text-red-500 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                                                    title="Delete"
+                                                >
+                                                    <svg
+                                                        xmlns="http://www.w3.org/2000/svg"
+                                                        viewBox="0 0 20 20"
+                                                        fill="currentColor"
+                                                        className="w-4 h-4"
+                                                    >
+                                                        <path
+                                                            fillRule="evenodd"
+                                                            d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z"
+                                                            clipRule="evenodd"
+                                                        />
+                                                    </svg>
+                                                </button>
+                                            )}
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -317,8 +376,14 @@ export default function ExportPage() {
                 {/* ── Operation Log ──────────────────────────── */}
                 {log.length > 0 && (
                     <div className="border rounded-lg dark:border-neutral-700">
-                        <div className="px-4 py-2 border-b dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800">
+                        <div className="px-4 py-2 border-b dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 flex justify-between items-center">
                             <h3 className="text-sm font-semibold">Log</h3>
+                            <button
+                                onClick={() => setLog([])}
+                                className="text-xs text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors"
+                            >
+                                Clear Logs
+                            </button>
                         </div>
                         <div className="p-3 font-mono text-xs space-y-0.5 max-h-40 overflow-y-auto bg-neutral-900 text-neutral-300 rounded-b-lg">
                             {log.map((line, i) => (
