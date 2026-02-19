@@ -1,17 +1,23 @@
 "use client";
 
 import { RawImage } from '@huggingface/transformers';
+import Image from 'next/image';
 import Link from 'next/link';
-import { useCallback, useRef, useState } from 'react';
-import { createSegmenter } from './modnet-client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createSegmenter, type Variant } from './modnet-client';
 
 export default function RemoveBgPage() {
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [maskUrl, setMaskUrl] = useState<string | null>(null);
   const [compositeUrl, setCompositeUrl] = useState<string | null>(null);
-  const [variant, setVariant] = useState<'auto' | 'fp32' | 'fp16' | 'uint8'>('auto');
-  const [modelInfo, setModelInfo] = useState<{ modelId: string; dtype: string; loadTime: string; cached: boolean } | null>(null);
+  const [variant, setVariant] = useState<Variant>('auto');
+
+  // Model selection
+  const [availableModels, setAvailableModels] = useState<{ id: string, name: string; }[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>('modnet');
+
+  const [modelInfo, setModelInfo] = useState<{ modelId: string; dtype: string; loadTime: string; cached: boolean; } | null>(null);
   const [inferenceTime, setInferenceTime] = useState<string | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -32,15 +38,31 @@ export default function RemoveBgPage() {
     e.preventDefault();
     setDragActive(false);
     const f = e.dataTransfer.files?.[0];
-    if (f && f.type.startsWith('image/')) handleFile(f);
+    if (f?.type?.startsWith('image/')) handleFile(f);
   }, [handleFile]);
+
+  // Fetch available models on mount
+  useEffect(() => {
+    fetch('/api/models/deployed')
+      .then(res => res.json())
+      .then(data => {
+        setAvailableModels(data);
+        // If default 'modnet' is not in list (unlikely), select first available
+        if (data.length > 0 && !data.some((m: { id: string; }) => m.id === 'modnet')) {
+          setSelectedModel(data[0].id);
+        }
+      })
+      .catch(err => console.error("Failed to fetch models", err));
+  }, []);
 
   async function onRun() {
     if (!file) return;
     setLoading(true);
     setLoadingStep('Cargando modelo...');
+    setLoadingStep('Cargando modelo...');
     try {
-      const result_seg = await createSegmenter({ variant });
+      const modelPath = `/models/${selectedModel}`; // e.g. /models/modnet or /models/my-v1
+      const result_seg = await createSegmenter({ variant, modelPath });
       const { segmenter, dtype, modelId, loadTime, cached } = result_seg;
       setModelInfo({ modelId, dtype, loadTime: loadTime ?? '—', cached });
 
@@ -125,12 +147,31 @@ export default function RemoveBgPage() {
             <p className="text-xs text-neutral-500">MODNet · Inferencia en navegador</p>
           </div>
         </div>
+
         <div className="flex items-center gap-3">
-          <label className="text-xs text-neutral-500">Variante:</label>
+          {/* Model Selector */}
+          {availableModels.length > 0 && (
+            <div className="flex items-center gap-2">
+              <label htmlFor="model-select" className="text-xs text-neutral-500">Modelo:</label>
+              <select
+                id="model-select"
+                className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[150px]"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+              >
+                {availableModels.map(m => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <label htmlFor="variant-select" className="text-xs text-neutral-500">Variante:</label>
           <select
+            id="variant-select"
             className="bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             value={variant}
-            onChange={(e) => setVariant(e.target.value as any)}
+            onChange={(e) => setVariant(e.target.value as Variant)}
           >
             <option value="auto">Auto (q8/uint8)</option>
             <option value="fp32">FP32 (completo)</option>
@@ -142,41 +183,8 @@ export default function RemoveBgPage() {
 
       <div className="max-w-5xl mx-auto px-6 py-8">
         {/* Upload zone */}
-        {!fileUrl ? (
-          <div
-            onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
-            onDragLeave={() => setDragActive(false)}
-            onDrop={handleDrop}
-            onClick={() => inputRef.current?.click()}
-            className={`
-              border-2 border-dashed rounded-2xl p-16 text-center cursor-pointer transition-all
-              ${dragActive
-                ? 'border-blue-500 bg-blue-500/10'
-                : 'border-neutral-700 hover:border-neutral-500 hover:bg-neutral-900/50'}
-            `}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleFile(f);
-              }}
-            />
-            <div className="text-5xl mb-4">📸</div>
-            <p className="text-lg font-medium text-neutral-300">
-              Arrastra una imagen aquí
-            </p>
-            <p className="text-sm text-neutral-500 mt-2">
-              o haz clic para seleccionar un archivo
-            </p>
-            <p className="text-xs text-neutral-600 mt-4">
-              PNG, JPG, WebP · Retratos recomendados
-            </p>
-          </div>
-        ) : (
+        {/* Upload zone */}
+        {fileUrl ? (
           <>
             {/* Action bar */}
             <div className="flex items-center justify-between mb-6">
@@ -226,30 +234,38 @@ export default function RemoveBgPage() {
                       : 'bg-blue-600 hover:bg-blue-500 text-white'}
                   `}
                 >
-                  {loading ? (
-                    <>
-                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      {loadingStep}
-                    </>
-                  ) : maskUrl ? (
-                    <>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Re-procesar
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      Remover fondo
-                    </>
-                  )}
+                  {(() => {
+                    if (loading) {
+                      return (
+                        <>
+                          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                          {loadingStep}
+                        </>
+                      );
+                    }
+                    if (maskUrl) {
+                      return (
+                        <>
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          Re-procesar
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Remover fondo
+                      </>
+                    );
+                  })()}
                 </button>
               </div>
             </div>
@@ -262,10 +278,14 @@ export default function RemoveBgPage() {
                   <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Original</span>
                 </div>
                 <div className="rounded-xl overflow-hidden border border-neutral-800 bg-neutral-900">
-                  <img
+                  <Image
                     src={fileUrl}
                     alt="original"
+                    width={0}
+                    height={0}
+                    sizes="100vw"
                     className="w-full h-auto"
+                    unoptimized
                   />
                 </div>
               </div>
@@ -283,10 +303,14 @@ export default function RemoveBgPage() {
                       backgroundSize: '20px 20px',
                     }}
                   >
-                    <img
+                    <Image
                       src={compositeUrl}
                       alt="sin fondo"
+                      width={0}
+                      height={0}
+                      sizes="100vw"
                       className="w-full h-auto"
+                      unoptimized
                     />
                   </div>
                 </div>
@@ -317,8 +341,44 @@ export default function RemoveBgPage() {
               </div>
             )}
           </>
+        ) : (
+          <button
+            type="button"
+            onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={handleDrop}
+            onClick={() => inputRef.current?.click()}
+            className={`
+              w-full 
+              border-2 border-dashed rounded-2xl p-16 text-center cursor-pointer transition-all
+              ${dragActive
+                ? 'border-blue-500 bg-blue-500/10'
+                : 'border-neutral-700 hover:border-neutral-500 hover:bg-neutral-900/50'}
+            `}
+          >
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+              }}
+            />
+            <div className="text-5xl mb-4">📸</div>
+            <p className="text-lg font-medium text-neutral-300">
+              Arrastra una imagen aquí
+            </p>
+            <p className="text-sm text-neutral-500 mt-2">
+              o haz clic para seleccionar un archivo
+            </p>
+            <p className="text-xs text-neutral-600 mt-4">
+              PNG, JPG, WebP · Retratos recomendados
+            </p>
+          </button>
         )}
       </div>
-    </main>
+    </main >
   );
 }

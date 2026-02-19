@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3002",
-    "dev:back": "cd backend && uv run uvicorn main:app --reload --port 8000",
+    "dev:back": "cd backend && uv run uvicorn main:app --reload --reload-exclude \"data/*\" --reload-exclude \"models/*\" --reload-exclude \"checkpoints/*\" --reload-exclude \"exports/*\" --port 8000",
     "dev:all": "concurrently \"pnpm dev\" \"pnpm dev:back\"",
     "build": "next build",
     "start": "next start",

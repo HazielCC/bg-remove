@@ -1,9 +1,18 @@
 import { pipeline } from '@huggingface/transformers';
 
-type Variant = 'auto' | 'fp32' | 'fp16' | 'uint8';
+export type Variant = 'auto' | 'fp32' | 'fp16' | 'uint8';
 type ModelDType = 'fp32' | 'fp16' | 'uint8' | 'q8';
 
-const CACHE: Partial<Record<string, any>> = {};
+interface CacheItem {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  segmenter: any; 
+  dtype: string;
+  modelId: string;
+  loadTime: string;
+  cached?: boolean; // added this as it's used in page.tsx
+}
+
+const CACHE: Partial<Record<string, CacheItem>> = {};
 
 async function detectModelDtype(variant: Variant): Promise<ModelDType> {
   if (variant === 'fp32') return 'fp32';
@@ -20,11 +29,14 @@ function buildDtypeCandidates(dtype: ModelDType): ModelDType[] {
   return [dtype];
 }
 
-export async function createSegmenter(options?: { variant?: Variant }) {
+export async function createSegmenter(options?: { variant?: Variant; modelPath?: string }) {
   const variant = options?.variant ?? 'auto';
   const requestedDtype = await detectModelDtype(variant);
   const dtypeCandidates = buildDtypeCandidates(requestedDtype);
-  const modelCandidates = ['/models/modnet', 'Xenova/modnet'];
+  
+  const modelCandidates = options?.modelPath 
+    ? [options.modelPath] 
+    : ['/models/modnet', 'Xenova/modnet'];
 
   for (const modelId of modelCandidates) {
     for (const dtype of dtypeCandidates) {

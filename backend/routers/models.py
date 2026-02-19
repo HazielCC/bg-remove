@@ -35,8 +35,9 @@ class QuantizeRequest(BaseModel):
 
 
 class DeployRequest(BaseModel):
-    target_dir: str = "../public/models/modnet/onnx"
+    target_dir: str = "../public/models/modnet/onnx"  # Deprecated/Ignored if name is set
     path: str | None = None
+    name: str | None = None  # Optional name for the deployment (e.g. "v1-epoch-10")
 
 
 class CompareRequest(BaseModel):
@@ -52,6 +53,33 @@ class BenchmarkRequest(BaseModel):
 
 
 # ── List Models ──────────────────────────────────────────
+@router.get("/deployed")
+async def list_deployed_models():
+    """
+    List models deployed to the public/models directory.
+    Returns a list of {id, name} objects.
+    """
+    public_models_dir = Path("../public/models")
+    if not public_models_dir.exists():
+        return [{"id": "modnet", "name": "Default (In-Browser)"}]
+
+    deployed = []
+    
+    # Always include the default modnet if it exists or as a fallback
+    modnet_path = public_models_dir / "modnet"
+    if (modnet_path / "config.json").exists():
+        deployed.append({"id": "modnet", "name": "Default (In-Browser)"})
+
+    # Scan for other directories
+    for p in public_models_dir.iterdir():
+        if p.is_dir() and p.name != "modnet":
+            # Check if it looks like a valid model dir (has config.json)
+            if (p / "config.json").exists():
+                deployed.append({"id": p.name, "name": p.name})
+
+    return deployed
+
+
 @router.get("/list")
 async def list_models():
     """List all available models: checkpoints + exported ONNX (sorted by newest)."""
@@ -173,35 +201,92 @@ async def quantize_model(model_id: str, req: QuantizeRequest):
 
 
 # ── Deploy to frontend ──────────────────────────────────
+# ── Deploy to frontend ──────────────────────────────────
 @router.post("/{model_id}/deploy")
 async def deploy_model(model_id: str, req: DeployRequest):
-    """Copy an ONNX model to the frontend public directory."""
+    """
+    Copy an ONNX model to the frontend public directory.
+    If 'name' is provided, creates a new directory public/models/{name}.
+    If 'name' is NOT provided, overwrites public/models/modnet (legacy behavior).
+    """
+    import re
+    
     # Prefer explicit path from request (avoids ambiguous stem matches)
     onnx_path = _resolve_onnx_path(req.path) if req.path else _find_onnx(model_id)
     if not onnx_path:
         raise HTTPException(status_code=404, detail=f"ONNX model not found: {model_id}")
 
-    target = Path(req.target_dir)
-    target.mkdir(parents=True, exist_ok=True)
+    # Validate name if provided
+    if req.name:
+        if not re.match(r"^[a-zA-Z0-9\-_]+$", req.name):
+            raise HTTPException(status_code=400, detail="Invalid path name. Use alphanumeric, hyphens, or underscores.")
+        
+        # New Deployment Mode
+        target_base = Path("../public/models") / req.name
+        target_onnx = target_base / "onnx"
+        target_onnx.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Copy config files from base modnet (required for transformers.js)
+        # 1. Copy config files from base modnet or backend defaults (required for transformers.js)
+        base_modnet = Path("../public/models/modnet")
+        backend_defaults = Path("ml/configs")
+        configs = ["config.json", "preprocessor_config.json", "quantize_config.json"]
+        
+        for cfg in configs:
+            # Try public/models/modnet first (to preserve user customizations)
+            src_cfg = base_modnet / cfg
+            if not src_cfg.exists():
+                # Fallback to backend defaults
+                src_cfg = backend_defaults / cfg
+            
+            if src_cfg.exists():
+                shutil.copy2(src_cfg, target_base / cfg)
+            else:
+                 print(f"Warning: Config {cfg} not found in {base_modnet} or {backend_defaults}")
 
-    # Determine target filename based on dtype
-    src_name = Path(onnx_path).name
-    if "fp16" in src_name:
-        dest_name = "model_fp16.onnx"
-    elif "uint8" in src_name or "quantized" in src_name:
-        dest_name = "model_quantized.onnx"
+        # 2. Determine target filename based on dtype
+        src_name = Path(onnx_path).name
+        if "fp16" in src_name:
+            dest_name = "model_fp16.onnx"
+        elif "uint8" in src_name or "quantized" in src_name:
+            dest_name = "model_quantized.onnx"
+        else:
+            dest_name = "model.onnx"
+
+        dest = target_onnx / dest_name
+        shutil.copy2(onnx_path, dest)
+        
+        return {
+            "status": "deployed",
+            "id": req.name,
+            "source": str(onnx_path),
+            "destination": str(dest),
+        }
+
     else:
-        dest_name = "model.onnx"
+        # Legacy/Default Mode (Overwrite modnet)
+        target = Path(req.target_dir)
+        target.mkdir(parents=True, exist_ok=True)
 
-    dest = target / dest_name
-    shutil.copy2(onnx_path, dest)
+        # Determine target filename based on dtype
+        src_name = Path(onnx_path).name
+        if "fp16" in src_name:
+            dest_name = "model_fp16.onnx"
+        elif "uint8" in src_name or "quantized" in src_name:
+            dest_name = "model_quantized.onnx"
+        else:
+            dest_name = "model.onnx"
 
-    return {
-        "status": "deployed",
-        "source": str(onnx_path),
-        "destination": str(dest),
-        "filename": dest_name,
-    }
+        dest = target / dest_name
+        shutil.copy2(onnx_path, dest)
+
+        return {
+            "status": "deployed",
+            "id": "modnet",
+            "source": str(onnx_path),
+            "destination": str(dest),
+            "filename": dest_name,
+        }
 
 
 # ── Compare Models ───────────────────────────────────────

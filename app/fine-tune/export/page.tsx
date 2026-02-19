@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiFetch, apiPost } from "../lib/api";
 import HelpTip from "../components/help-tip";
+import { apiFetch, apiPost } from "../lib/api";
 
 interface ModelInfo {
     type: string;
@@ -21,6 +21,7 @@ export default function ExportPage() {
     // Selected model for operations
     const [selectedCkpt, setSelectedCkpt] = useState("");
     const [selectedOnnx, setSelectedOnnx] = useState("");
+    const [deployName, setDeployName] = useState(""); // Optional name for deployment
     const [exportSize, setExportSize] = useState(512);
     const [quantDtype, setQuantDtype] = useState<"fp16" | "uint8">("uint8");
 
@@ -57,14 +58,15 @@ export default function ExportPage() {
         addLog(`Exporting ${selectedCkpt} → ONNX (${exportSize}px)...`);
         try {
             const stem = selectedCkpt.split("/").pop()?.replace(".ckpt", "") || "model";
-            const result = await apiPost<{ status: string; path: string; size_mb: number }>(
+            const result = await apiPost<{ status: string; path: string; size_mb: number; }>(
                 `/models/${encodeURIComponent(stem)}/export-onnx`,
                 { img_size: exportSize, path: selectedCkpt }
             );
             addLog(`Exported: ${result.path} (${result.size_mb} MB)`);
             fetchModels();
-        } catch (e) {
-            addLog(`ERROR: ${(e as Error).message}`);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            addLog(`ERROR: ${msg}`);
         } finally {
             setLoading(false);
         }
@@ -80,14 +82,15 @@ export default function ExportPage() {
         addLog(`Quantizing ${selectedOnnx} → ${quantDtype}...`);
         try {
             const stem = selectedOnnx.split("/").pop()?.replace(".onnx", "") || "model";
-            const result = await apiPost<{ status: string; path: string; size_mb: number }>(
+            const result = await apiPost<{ status: string; path: string; size_mb: number; }>(
                 `/models/${encodeURIComponent(stem)}/quantize`,
                 { dtype: quantDtype, path: selectedOnnx }
             );
             addLog(`Quantized: ${result.path} (${result.size_mb} MB)`);
             fetchModels();
-        } catch (e) {
-            addLog(`ERROR: ${(e as Error).message}`);
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            addLog(`ERROR: ${msg}`);
         } finally {
             setLoading(false);
         }
@@ -107,14 +110,68 @@ export default function ExportPage() {
                 status: string;
                 destination: string;
                 filename: string;
+                id?: string;
             }>(`/models/${encodeURIComponent(stem)}/deploy`, {
-                target_dir: "../public/models/modnet/onnx",
+                target_dir: "../public/models/modnet/onnx", // fallback
                 path: selectedOnnx,
+                name: deployName.trim() || undefined
             });
+
+            const destLabel = result.id ? `public/models/${result.id}` : `public/models/modnet/onnx`;
             addLog(
-                `Deployed! ${result.filename} → ${result.destination}`
+                `Deployed! ${result.filename} → ${destLabel}`
             );
+            addLog("Now available in the Model Tester (Probador).");
             addLog("Restart the dev server to pick up the new model.");
+        } catch (e) {
+            addLog(`ERROR: ${(e as Error).message}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // ── Quick Deploy (One-Click) ──────────────────────────
+    const handleQuickDeploy = async () => {
+        if (!selectedCkpt) {
+            alert("Select a checkpoint first");
+            return;
+        }
+        if (!deployName) {
+            alert("Enter a deployment name (e.g. 'v1-test')");
+            return;
+        }
+
+        setLoading(true);
+        try {
+            // 1. Export
+            addLog(`[1/3] Exporting ${selectedCkpt}...`);
+            const stem = selectedCkpt.split("/").pop()?.replace(".ckpt", "") || "model";
+            const exportRes = await apiPost<{ path: string; }>(
+                `/models/${encodeURIComponent(stem)}/export-onnx`,
+                { img_size: exportSize, path: selectedCkpt }
+            );
+
+            // 2. Quantize (uint8)
+            addLog(`[2/3] Quantizing to uint8...`);
+            const onnxStem = exportRes.path.split("/").pop()?.replace(".onnx", "") || "model";
+            const quantRes = await apiPost<{ path: string; }>(
+                `/models/${encodeURIComponent(onnxStem)}/quantize`,
+                { dtype: "uint8", path: exportRes.path }
+            );
+
+            // 3. Deploy
+            addLog(`[3/3] Deploying to public/models/${deployName}...`);
+            const quantStem = quantRes.path.split("/").pop()?.replace(".onnx", "") || "model";
+            await apiPost(
+                `/models/${encodeURIComponent(quantStem)}/deploy`,
+                {
+                    path: quantRes.path,
+                    name: deployName
+                }
+            );
+
+            addLog("✅ Deployment Complete! Restart dev server to use.");
+            fetchModels();
         } catch (e) {
             addLog(`ERROR: ${(e as Error).message}`);
         } finally {
@@ -135,11 +192,11 @@ export default function ExportPage() {
         try {
             await apiPost("/models/delete", { path: m.path });
             addLog(`Deleted: ${m.name}`);
-            
+
             // Clear selection if deleted item was selected
             if (selectedCkpt === m.path) setSelectedCkpt("");
             if (selectedOnnx === m.path) setSelectedOnnx("");
-            
+
             fetchModels();
         } catch (e) {
             addLog(`ERROR deleting ${m.name}: ${(e as Error).message}`);
@@ -154,6 +211,62 @@ export default function ExportPage() {
             </p>
 
             <div className="space-y-6">
+                {/* ── Quick Deploy Card ──────────────────────── */}
+                <div className="border border-green-500/30 bg-green-500/5 rounded-lg p-4">
+                    <h3 className="text-sm font-semibold mb-3 flex items-center gap-2 text-green-400">
+                        <span className="text-lg">🚀</span>
+                        Quick Deploy (One-Click)
+                        <HelpTip text="Exporta, cuantiza y despliega automáticamente en un solo paso." />
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <div className="text-xs text-neutral-500 mb-1">Checkpoint</div>
+                            <select
+                                value={selectedCkpt}
+                                onChange={(e) => setSelectedCkpt(e.target.value)}
+                                className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
+                            >
+                                <option value="">-- Select checkpoint --</option>
+                                {checkpoints.map((m) => (
+                                    <option key={m.path} value={m.path}>
+                                        {m.run ? `${m.run}/` : ""}
+                                        {m.name} ({m.size_mb} MB)
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <div className="text-xs text-neutral-500 mb-1">Deployment Name</div>
+                            <input
+                                type="text"
+                                placeholder="e.g. v1-release"
+                                value={deployName}
+                                onChange={(e) => setDeployName(e.target.value.replace(/[^a-zA-Z0-9\-_]/g, ""))}
+                                className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
+                            />
+                        </div>
+                    </div>
+                    <button
+                        onClick={handleQuickDeploy}
+                        disabled={loading || !selectedCkpt || !deployName}
+                        className="mt-3 w-full bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {loading ? "Processing..." : "Run Pipeline (Export → Quantize → Deploy)"}
+                    </button>
+                    <p className="text-[10px] text-neutral-500 mt-2 text-center">
+                        Creates a uint8 quantized model and deploys it to <code>public/models/&lt;name&gt;</code>.
+                    </p>
+                </div>
+
+                <div className="relative">
+                    <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                        <div className="w-full border-t border-neutral-700"></div>
+                    </div>
+                    <div className="relative flex justify-center">
+                        <span className="bg-neutral-950 px-2 text-xs text-neutral-500">Advanced / Manual Steps</span>
+                    </div>
+                </div>
+
                 {/* ── Step 1: Export ONNX ─────────────────────── */}
                 <div className="border rounded-lg p-4 dark:border-neutral-700">
                     <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
@@ -292,6 +405,23 @@ export default function ExportPage() {
                                 </option>
                             ))}
                         </select>
+                    </div>
+
+                    <div className="mb-3">
+                        <div className="text-xs text-neutral-500 mb-1 inline-flex items-center">
+                            <span>Deployment Name (Optional)</span>
+                            <HelpTip text="Nombre único para este modelo (ej. 'v2-epoch10'). Si se deja vacío, sobrescribe el modelo por defecto." />
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="e.g. experiment-v1 (Optional)"
+                            value={deployName}
+                            onChange={(e) => setDeployName(e.target.value.replace(/[^a-zA-Z0-9\-_]/g, ""))}
+                            className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
+                        />
+                        <p className="text-[10px] text-neutral-500 mt-1">
+                            Only alphanumeric characters, hyphens, and underscores allowed.
+                        </p>
                     </div>
                     <button
                         onClick={handleDeploy}
