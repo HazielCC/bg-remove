@@ -89,9 +89,183 @@ class TrainRequest(BaseModel):
         return self
 
 
+class RecommendConfigRequest(BaseModel):
+    dataset_id: str
+    stage: Literal["supervised", "soc"] = "supervised"
+    has_pretrained: bool = False
+
+
+def _analyze_dataset(dataset_path: Path) -> dict:
+    from PIL import Image
+
+    images_dir = dataset_path / "images"
+    alphas_dir = dataset_path / "alphas"
+    exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
+    images = sorted([p for p in images_dir.rglob("*") if p.suffix.lower() in exts])
+    alphas = sorted([p for p in alphas_dir.rglob("*") if p.suffix.lower() in exts])
+
+    widths: list[int] = []
+    heights: list[int] = []
+    for p in images[:300]:
+        try:
+            img = Image.open(p)
+            w, h = img.size
+            widths.append(w)
+            heights.append(h)
+        except Exception:
+            continue
+
+    avg_w = int(sum(widths) / len(widths)) if widths else 0
+    avg_h = int(sum(heights) / len(heights)) if heights else 0
+    min_side = int(min(min(widths), min(heights))) if widths and heights else 0
+
+    gemini_summary = None
+    summary_path = dataset_path / "gemini_assessment_summary.json"
+    if summary_path.exists():
+        try:
+            gemini_summary = json.loads(summary_path.read_text())
+        except Exception:
+            gemini_summary = None
+
+    return {
+        "images_count": len(images),
+        "alphas_count": len(alphas),
+        "avg_width": avg_w,
+        "avg_height": avg_h,
+        "min_side": min_side,
+        "gemini_summary": gemini_summary,
+    }
+
+
+def _recommend_supervised_config(stats: dict) -> tuple[dict, list[str]]:
+    n = int(stats["images_count"])
+    min_side = int(stats["min_side"])
+    summary = stats.get("gemini_summary") or {}
+
+    reasons: list[str] = []
+    cfg = {
+        "stage": "supervised",
+        "epochs": 40,
+        "lr": 0.01,
+        "batch_size": 4,
+        "img_size": 512,
+        "semantic_loss_weight": 10.0,
+        "detail_loss_weight": 10.0,
+        "matte_loss_weight": 1.0,
+        "train_split": 0.8,
+        "val_split": 0.1,
+        "save_every": 5,
+    }
+
+    if n < 300:
+        cfg.update({"epochs": 45, "lr": 0.004, "batch_size": 2, "train_split": 0.75, "val_split": 0.2})
+        reasons.append("Dataset pequeño: más epochs, LR más bajo y validación más grande.")
+    elif n < 2000:
+        cfg.update({"epochs": 35, "lr": 0.005, "batch_size": 4, "train_split": 0.8, "val_split": 0.15})
+        reasons.append("Dataset mediano: balance entre estabilidad y tiempo de entrenamiento.")
+    else:
+        cfg.update({"epochs": 24, "lr": 0.008, "batch_size": 6, "train_split": 0.85, "val_split": 0.1})
+        reasons.append("Dataset grande: menos epochs y mayor throughput.")
+
+    if min_side >= 1200:
+        cfg["img_size"] = 768
+        reasons.append("Resolución alta detectada: se sube img_size a 768.")
+    elif min_side and min_side < 480:
+        cfg["img_size"] = 384
+        reasons.append("Resolución baja detectada: img_size 384 para evitar artefactos.")
+
+    avg_quality = float(summary.get("avg_quality_score", 0.0) or 0.0)
+    split_counts = summary.get("split_counts", {}) if isinstance(summary, dict) else {}
+    difficulty_counts = summary.get("difficulty_counts", {}) if isinstance(summary, dict) else {}
+
+    if avg_quality > 0:
+        reasons.append(f"Gemini avg_quality_score={avg_quality:.1f} aplicado al ajuste fino.")
+        if avg_quality < 55:
+            cfg["lr"] = round(float(cfg["lr"]) * 0.7, 6)
+            cfg["detail_loss_weight"] = 12.0
+            cfg["matte_loss_weight"] = 1.2
+            reasons.append("Calidad baja: LR reducido y mayor peso a detalle/matte.")
+        elif avg_quality >= 75:
+            cfg["lr"] = round(float(cfg["lr"]) * 1.1, 6)
+            reasons.append("Calidad alta: LR ligeramente mayor para convergencia más rápida.")
+
+    assessed = int(summary.get("assessed_images", 0) or 0)
+    if assessed > 0 and isinstance(split_counts, dict):
+        exclude_ratio = float(split_counts.get("exclude", 0) or 0) / max(1, assessed)
+        if exclude_ratio > 0.2:
+            cfg["train_split"] = min(float(cfg["train_split"]), 0.75)
+            cfg["val_split"] = max(float(cfg["val_split"]), 0.2)
+            reasons.append("Muchos samples excluibles: se incrementa validación para controlar overfitting.")
+
+    if assessed > 0 and isinstance(difficulty_counts, dict):
+        hard_ratio = float(difficulty_counts.get("hard", 0) or 0) / max(1, assessed)
+        if hard_ratio > 0.35:
+            cfg["detail_loss_weight"] = max(float(cfg["detail_loss_weight"]), 12.0)
+            reasons.append("Alta proporción de casos difíciles: mayor peso en pérdida de detalle.")
+
+    return cfg, reasons
+
+
+def _recommend_soc_config(has_pretrained: bool, stats: dict) -> tuple[dict, list[str]]:
+    n = int(stats["images_count"])
+    reasons: list[str] = []
+    cfg = {
+        "stage": "soc",
+        "soc_epochs": 8,
+        "soc_lr": 0.00001,
+        "batch_size": 1,
+        "img_size": 512,
+        "save_every": 2,
+    }
+
+    if n >= 2000:
+        cfg["soc_epochs"] = 6
+        reasons.append("Dataset grande: menos epochs SOC para evitar deriva.")
+    elif n < 500:
+        cfg["soc_epochs"] = 10
+        reasons.append("Dataset pequeño: más epochs SOC para adaptación progresiva.")
+
+    if not has_pretrained:
+        reasons.append("SOC sin checkpoint previo no es ideal; se recomienda pasar por supervisado primero.")
+
+    return cfg, reasons
+
+
 # Global SSE queue — created per training run
 _event_queue: asyncio.Queue | None = None
 _training_task: asyncio.Task | None = None
+
+
+@router.post("/recommend-config")
+async def recommend_training_config(req: RecommendConfigRequest):
+    """Recommend training hyperparameters dynamically from dataset characteristics."""
+    ds_path = _resolve_dataset_path(req.dataset_id)
+    if not ds_path.exists():
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {req.dataset_id}")
+
+    stats = await asyncio.to_thread(_analyze_dataset, ds_path)
+    if stats["images_count"] < 1:
+        raise HTTPException(status_code=422, detail="Dataset has no images")
+
+    if req.stage == "soc":
+        recommendation, reasons = _recommend_soc_config(req.has_pretrained, stats)
+    else:
+        recommendation, reasons = _recommend_supervised_config(stats)
+
+    return {
+        "dataset_id": req.dataset_id,
+        "stage": req.stage,
+        "recommendation": recommendation,
+        "reasons": reasons,
+        "dataset_stats": {
+            "images_count": stats["images_count"],
+            "alphas_count": stats["alphas_count"],
+            "avg_width": stats["avg_width"],
+            "avg_height": stats["avg_height"],
+            "min_side": stats["min_side"],
+            "has_gemini_summary": bool(stats.get("gemini_summary")),
+        },
+    }
 
 
 # ── Start Training ───────────────────────────────────────

@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     # HuggingFace
     hf_token: str | None = None
 
+    # Gemini (dataset assessment)
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3-flash-preview"
+    gemini_timeout_seconds: int = 45
+    gemini_default_max_images: int = 200
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

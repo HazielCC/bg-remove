@@ -13,6 +13,7 @@ interface DatasetInfo {
     alphas_count: number;
     curated: boolean;
     metadata: Record<string, unknown>;
+    assessment?: AssessmentSummary | null;
 }
 
 interface HFDataset {
@@ -69,6 +70,48 @@ interface DatasetStats {
     total_size_mb: number;
 }
 
+interface AssessmentSummary {
+    dataset_id: string;
+    model: string;
+    assessed_images: number;
+    failed_images: number;
+    avg_quality_score: number;
+    split_counts: Record<string, number>;
+    difficulty_counts: Record<string, number>;
+    top_issues: { issue: string; count: number }[];
+    generated_at: number;
+}
+
+interface AssessmentStatusResponse {
+    status: "idle" | "running" | "finished" | "error";
+    dataset_id: string;
+    progress?: {
+        processed: number;
+        total: number;
+        failed: number;
+        current_image?: string | null;
+    } | null;
+    summary?: AssessmentSummary;
+    error?: string | null;
+}
+
+interface AssessmentResultsResponse {
+    summary: AssessmentSummary;
+    details: {
+        image_path: string;
+        assessment: {
+            quality_score: number;
+            difficulty: string;
+            recommended_split: string;
+            issues: string[];
+            confidence: number;
+            rationale: string;
+        };
+        model_error?: string | null;
+    }[];
+    total_details: number;
+}
+
 // ── Component ───────────────────────────────────────────
 export default function DatasetsPage() {
     const [tab, setTab] = useState<"local" | "search">("local");
@@ -87,6 +130,12 @@ export default function DatasetsPage() {
     const [previewSamples, setPreviewSamples] = useState<Sample[]>([]);
     const [stats, setStats] = useState<DatasetStats | null>(null);
     const [curateResult, setCurateResult] = useState<CurateResult | null>(null);
+    const [assessingId, setAssessingId] = useState<string | null>(null);
+    const [assessmentStatus, setAssessmentStatus] =
+        useState<AssessmentStatusResponse | null>(null);
+    const [assessmentResult, setAssessmentResult] =
+        useState<AssessmentResultsResponse | null>(null);
+    const [assessmentError, setAssessmentError] = useState<string | null>(null);
 
     const fetchLocal = useCallback(async () => {
         try {
@@ -169,6 +218,9 @@ export default function DatasetsPage() {
     const handlePreview = async (id: string) => {
         setPreviewId(id);
         setCurateResult(null);
+        setAssessmentResult(null);
+        setAssessmentStatus(null);
+        setAssessmentError(null);
         setStats(null);
         try {
             const [samples, st] = await Promise.all([
@@ -177,6 +229,14 @@ export default function DatasetsPage() {
             ]);
             setPreviewSamples(samples);
             setStats(st);
+            try {
+                const existing = await apiFetch<AssessmentResultsResponse>(
+                    `/datasets/${id}/assess/results?limit=120`
+                );
+                setAssessmentResult(existing);
+            } catch {
+                // ignore if dataset has not been assessed yet
+            }
         } catch (e) {
             console.error(e);
         }
@@ -196,6 +256,47 @@ export default function DatasetsPage() {
             alert("Curate error: " + (e as Error).message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const handleAssess = async (id: string) => {
+        setAssessmentResult(null);
+        setAssessmentStatus(null);
+        setAssessmentError(null);
+        setAssessingId(id);
+        try {
+            await apiPost(`/datasets/${id}/assess`, {
+                limit: 200,
+                overwrite: false,
+            });
+
+            let status: AssessmentStatusResponse = {
+                status: "running",
+                dataset_id: id,
+            };
+            while (status.status === "running") {
+                await sleep(1200);
+                status = await apiFetch<AssessmentStatusResponse>(
+                    `/datasets/${id}/assess/status`
+                );
+                setAssessmentStatus(status);
+            }
+
+            if (status.status === "finished") {
+                const result = await apiFetch<AssessmentResultsResponse>(
+                    `/datasets/${id}/assess/results?limit=120`
+                );
+                setAssessmentResult(result);
+                fetchLocal();
+            }
+        } catch (e) {
+            const msg = "Gemini assess error: " + (e as Error).message;
+            setAssessmentError(msg);
+            alert(msg);
+        } finally {
+            setAssessingId(null);
         }
     };
 
@@ -450,6 +551,11 @@ export default function DatasetsPage() {
                                                         ✓ Curated
                                                     </span>
                                                 )}
+                                                {ds.assessment && (
+                                                    <span className="ml-2 text-blue-600">
+                                                        ✨ Gemini scored ({ds.assessment.avg_quality_score})
+                                                    </span>
+                                                )}
                                             </p>
                                         </div>
                                         <div className="flex gap-2">
@@ -465,6 +571,13 @@ export default function DatasetsPage() {
                                                 className="text-xs px-3 py-1 border rounded hover:bg-neutral-50 dark:hover:bg-neutral-800 dark:border-neutral-600"
                                             >
                                                 Curate
+                                            </button>
+                                            <button
+                                                onClick={() => handleAssess(ds.id)}
+                                                disabled={assessingId === ds.id}
+                                                className="text-xs px-3 py-1 border rounded hover:bg-neutral-50 dark:hover:bg-neutral-800 dark:border-neutral-600"
+                                            >
+                                                {assessingId === ds.id ? "Analizando..." : "Gemini Assess"}
                                             </button>
                                             <button
                                                 onClick={() => handleDelete(ds.id)}
@@ -547,6 +660,65 @@ export default function DatasetsPage() {
                                     </div>
                                 ))}
                             </div>
+
+                            {/* Gemini assessment status/results */}
+                            {(assessmentStatus || assessmentResult) && (
+                                <div className="mt-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg p-4">
+                                    <h4 className="font-medium mb-2">Gemini Dataset Assessment</h4>
+                                    {assessmentStatus?.status === "running" && (
+                                        <p className="text-sm text-blue-700 dark:text-blue-300">
+                                            Analizando {assessmentStatus.progress?.processed ?? 0}/
+                                            {assessmentStatus.progress?.total ?? 0}
+                                            {" · "}
+                                            fallidas: {assessmentStatus.progress?.failed ?? 0}
+                                        </p>
+                                    )}
+                                    {assessmentResult && (
+                                        <div className="space-y-3">
+                                            <div className="grid grid-cols-4 gap-2 text-sm">
+                                                <div>
+                                                    <span className="font-bold">
+                                                        {assessmentResult.summary.avg_quality_score}
+                                                    </span>{" "}
+                                                    avg score
+                                                </div>
+                                                <div>
+                                                    <span className="font-bold">
+                                                        {assessmentResult.summary.assessed_images}
+                                                    </span>{" "}
+                                                    assessed
+                                                </div>
+                                                <div>
+                                                    <span className="font-bold">
+                                                        {assessmentResult.summary.split_counts.train ?? 0}
+                                                    </span>{" "}
+                                                    train
+                                                </div>
+                                                <div>
+                                                    <span className="font-bold">
+                                                        {assessmentResult.summary.split_counts.exclude ?? 0}
+                                                    </span>{" "}
+                                                    exclude
+                                                </div>
+                                            </div>
+                                            {assessmentResult.summary.top_issues.length > 0 && (
+                                                <div className="text-xs text-blue-900 dark:text-blue-200">
+                                                    Top issues:{" "}
+                                                    {assessmentResult.summary.top_issues
+                                                        .slice(0, 5)
+                                                        .map((it) => `${it.issue} (${it.count})`)
+                                                        .join(", ")}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            {assessmentError && (
+                                <div className="mt-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg p-3 text-sm text-red-700 dark:text-red-300">
+                                    {assessmentError}
+                                </div>
+                            )}
 
                             {/* Curate Results */}
                             {curateResult && (

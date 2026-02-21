@@ -14,15 +14,16 @@ Endpoints:
 
 import json
 import shutil
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import settings
 
 router = APIRouter()
+_assessment_jobs: dict[str, dict] = {}
 
 
 # ── Path safety ──────────────────────────────────────────
@@ -59,6 +60,11 @@ class CurateRequest(BaseModel):
     min_resolution: int = 256
     check_alpha_range: bool = True
     remove_broken: bool = False
+
+
+class AssessRequest(BaseModel):
+    limit: int | None = None
+    overwrite: bool = False
 
 
 # ── Suggested datasets (known to work) ───────────────────
@@ -202,6 +208,14 @@ async def list_local_datasets():
         if meta_path.exists():
             metadata = json.loads(meta_path.read_text())
 
+        assessment_summary = None
+        assessment_path = d / "gemini_assessment_summary.json"
+        if assessment_path.exists():
+            try:
+                assessment_summary = json.loads(assessment_path.read_text())
+            except Exception:
+                assessment_summary = None
+
         datasets.append(
             {
                 "id": d.name,
@@ -211,6 +225,7 @@ async def list_local_datasets():
                 "alphas_count": alpha_count,
                 "curated": metadata.get("curated", False),
                 "metadata": metadata,
+                "assessment": assessment_summary,
             }
         )
 
@@ -435,6 +450,136 @@ async def dataset_stats(dataset_id: str):
         }
 
     return await asyncio.to_thread(_stats)
+
+
+@router.post("/{dataset_id}/assess")
+async def start_dataset_assessment(dataset_id: str, req: AssessRequest):
+    """Run Gemini-based quality assessment on dataset samples."""
+    import asyncio
+    from ml.gemini_dataset_assessor import (
+        GeminiAssessmentConfig,
+        assess_dataset_with_gemini as run_gemini_assessment,
+    )
+
+    ds_path = _resolve_dataset_path(dataset_id)
+    if not ds_path.exists():
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    if not settings.gemini_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="GEMINI_API_KEY is not configured in backend environment",
+        )
+
+    existing = _assessment_jobs.get(dataset_id)
+    if existing and existing.get("status") == "running":
+        return {
+            "status": "running",
+            "dataset_id": dataset_id,
+            "progress": existing.get("progress", {}),
+        }
+
+    limit = req.limit or settings.gemini_default_max_images
+    limit = max(1, min(limit, 5000))
+
+    _assessment_jobs[dataset_id] = {
+        "status": "running",
+        "dataset_id": dataset_id,
+        "started_at": int(time.time()),
+        "progress": {"processed": 0, "total": limit, "failed": 0},
+        "error": None,
+        "summary": None,
+    }
+
+    def _progress_update(progress: dict):
+        state = _assessment_jobs.get(dataset_id)
+        if not state:
+            return
+        state["progress"] = {
+            "processed": int(progress.get("processed", 0)),
+            "total": int(progress.get("total", limit)),
+            "failed": int(progress.get("failed", 0)),
+            "current_image": progress.get("current_image"),
+        }
+
+    cfg = GeminiAssessmentConfig(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_model,
+        timeout_seconds=settings.gemini_timeout_seconds,
+    )
+
+    async def _run():
+        try:
+            summary = await asyncio.to_thread(
+                run_gemini_assessment,
+                dataset_path=ds_path,
+                config=cfg,
+                limit=limit,
+                overwrite=req.overwrite,
+                progress_cb=_progress_update,
+            )
+            _assessment_jobs[dataset_id]["status"] = "finished"
+            _assessment_jobs[dataset_id]["finished_at"] = int(time.time())
+            _assessment_jobs[dataset_id]["summary"] = summary
+        except Exception as exc:
+            _assessment_jobs[dataset_id]["status"] = "error"
+            _assessment_jobs[dataset_id]["finished_at"] = int(time.time())
+            _assessment_jobs[dataset_id]["error"] = str(exc)
+
+    asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "dataset_id": dataset_id,
+        "limit": limit,
+        "model": settings.gemini_model,
+    }
+
+
+@router.get("/{dataset_id}/assess/status")
+async def dataset_assess_status(dataset_id: str):
+    """Get status for Gemini dataset assessment job."""
+    job = _assessment_jobs.get(dataset_id)
+    if not job:
+        ds_path = _resolve_dataset_path(dataset_id)
+        summary_path = ds_path / "gemini_assessment_summary.json"
+        if summary_path.exists():
+            return {
+                "status": "finished",
+                "dataset_id": dataset_id,
+                "progress": None,
+                "summary": json.loads(summary_path.read_text()),
+            }
+        return {"status": "idle", "dataset_id": dataset_id}
+    if job.get("status") == "error":
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "dataset_id": dataset_id,
+                "status": "error",
+                "error": job.get("error") or "Unknown assessment error",
+            },
+        )
+    return job
+
+
+@router.get("/{dataset_id}/assess/results")
+async def dataset_assess_results(dataset_id: str, limit: int = Query(200, ge=1, le=5000)):
+    """Get Gemini assessment summary + detailed rows."""
+    from ml.gemini_dataset_assessor import load_assessment_results
+
+    ds_path = _resolve_dataset_path(dataset_id)
+    if not ds_path.exists():
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    try:
+        data = load_assessment_results(ds_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="No assessment results found")
+
+    return {
+        "summary": data["summary"],
+        "details": data["details"][:limit],
+        "total_details": len(data["details"]),
+    }
 
 
 # ── Delete dataset ───────────────────────────────────────

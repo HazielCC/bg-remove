@@ -71,4 +71,24 @@ pnpm dev:back
 
 El proyecto incluye modelos MODNet para segmentación de imágenes:
 
+## Gemini 3: Evaluación de Datasets
+
+Puedes activar evaluación de calidad de dataset con Gemini 3 para priorizar imágenes útiles antes del entrenamiento.
+
+Variables de entorno (backend):
+
+```bash
+GEMINI_API_KEY=tu_api_key
+GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_DEFAULT_MAX_IMAGES=200
+```
+
+Flujo:
+
+1. Ve a `Fine Tune > Datasets`.
+2. En un dataset local, pulsa `Gemini Assess`.
+3. El sistema guarda resultados en:
+   - `backend/data/<dataset_id>/gemini_assessment.jsonl`
+   - `backend/data/<dataset_id>/gemini_assessment_summary.json`
+
 ## Información Adicional

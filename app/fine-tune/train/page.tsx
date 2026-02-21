@@ -20,11 +20,28 @@ interface Checkpoint {
     size_mb: number;
 }
 
+interface ConfigRecommendation {
+    dataset_id: string;
+    stage: "supervised" | "soc";
+    recommendation: Record<string, string | number>;
+    reasons: string[];
+    dataset_stats: {
+        images_count: number;
+        alphas_count: number;
+        avg_width: number;
+        avg_height: number;
+        min_side: number;
+        has_gemini_summary: boolean;
+    };
+}
+
 export default function TrainPage() {
     const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
     const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
     const [starting, setStarting] = useState(false);
+    const [recommending, setRecommending] = useState(false);
     const [result, setResult] = useState<string | null>(null);
+    const [recommendationNotes, setRecommendationNotes] = useState<string[]>([]);
 
     // Form state
     const [form, setForm] = useState({
@@ -84,6 +101,40 @@ export default function TrainPage() {
         }
     };
 
+    const applyRecommendation = (recommendation: Record<string, string | number>) => {
+        setForm((prev) => {
+            const next = { ...prev };
+            for (const [key, value] of Object.entries(recommendation)) {
+                if (key in next) {
+                    (next as Record<string, string | number>)[key] = value;
+                }
+            }
+            return next;
+        });
+    };
+
+    const handleAutoConfig = async () => {
+        if (!form.dataset_id) {
+            alert("Selecciona un dataset primero");
+            return;
+        }
+        setRecommending(true);
+        setRecommendationNotes([]);
+        try {
+            const rec = await apiPost<ConfigRecommendation>("/training/recommend-config", {
+                dataset_id: form.dataset_id,
+                stage: form.stage,
+                has_pretrained: Boolean(form.pretrained_ckpt),
+            });
+            applyRecommendation(rec.recommendation);
+            setRecommendationNotes(rec.reasons);
+        } catch (e) {
+            alert("Auto config error: " + (e as Error).message);
+        } finally {
+            setRecommending(false);
+        }
+    };
+
     const isSoc = form.stage === "soc";
 
     return (
@@ -112,6 +163,30 @@ export default function TrainPage() {
                             </option>
                         ))}
                     </select>
+                    <div className="mt-3 flex items-center gap-3">
+                        <button
+                            onClick={handleAutoConfig}
+                            disabled={recommending || !form.dataset_id}
+                            className="text-xs px-3 py-1.5 border rounded hover:bg-neutral-50 dark:hover:bg-neutral-800 dark:border-neutral-600 disabled:opacity-50"
+                        >
+                            {recommending ? "Calculando..." : "Auto config por dataset"}
+                        </button>
+                        <span className="text-xs text-neutral-500">
+                            Ajusta automáticamente hiperparámetros según datos + Gemini.
+                        </span>
+                    </div>
+                    {recommendationNotes.length > 0 && (
+                        <div className="mt-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 p-3">
+                            <p className="text-xs font-medium text-blue-700 dark:text-blue-300 mb-1">
+                                Recomendaciones aplicadas
+                            </p>
+                            <ul className="text-xs text-blue-900 dark:text-blue-200 space-y-1">
+                                {recommendationNotes.map((note, idx) => (
+                                    <li key={`${idx}-${note}`}>• {note}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
                 </Section>
 
                 {/* ── Stage ────────────────────────────────────── */}
