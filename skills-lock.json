@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "skills": {
+    "fastapi-templates": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "fa51843cda87fc738f819c937cc697691255684d27d598dbc64a3a121e480064"
+    },
+    "hugging-face-cli": {
+      "source": "huggingface/skills",
+      "sourceType": "github",
+      "computedHash": "51479ba117bd4446873722faf86b0e711ffd46fdb01a3054c69adf3fe2987e5d"
+    },
+    "hugging-face-datasets": {
+      "source": "huggingface/skills",
+      "sourceType": "github",
+      "computedHash": "0c1a4a58e5ae114ccda7a6d84e77c1ac80923ba51382fb3a0577130ff2175dbf"
+    }
+  }
+}

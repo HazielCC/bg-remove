@@ -260,7 +260,7 @@ class MODNet(nn.Module):
     ) -> "MODNet":
         """Load from a .ckpt file (official MODNet format)."""
         model = cls(backbone_pretrained=backbone_pretrained)
-        state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
+        state_dict = torch.load(ckpt_path, map_location=device, weights_only=False)
 
         # Handle DataParallel wrapped state_dict (keys start with 'module.')
         cleaned = {}
