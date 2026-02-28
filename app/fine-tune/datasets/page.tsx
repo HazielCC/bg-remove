@@ -122,6 +122,7 @@ export default function DatasetsPage() {
     const [loading, setLoading] = useState(false);
     const [downloading, setDownloading] = useState<string | null>(null);
     const [downloadMax, setDownloadMax] = useState<number>(500);
+    const [downloadOffset, setDownloadOffset] = useState<number>(0);
     const [downloadError, setDownloadError] = useState<string | null>(null);
     const [validating, setValidating] = useState<string | null>(null);
 
@@ -197,6 +198,7 @@ export default function DatasetsPage() {
                     dataset_name: datasetName,
                     split: "train",
                     max_samples: downloadMax || null,
+                    offset: downloadOffset,
                 }
             );
             if (result.status === "already_exists") {
@@ -442,6 +444,20 @@ export default function DatasetsPage() {
                                 onChange={(e) => setDownloadMax(Number(e.target.value))}
                                 className="w-20 border rounded-lg px-2 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
                                 min={10}
+                                step={100}
+                            />
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <div className="text-xs text-neutral-500 inline-flex items-center">
+                                <span>Offset:</span>
+                                <HelpTip text="Posición inicial (ej. 100 para saltar las primeras 100 imágenes). Útil para descargar en partes." />
+                            </div>
+                            <input
+                                type="number"
+                                value={downloadOffset}
+                                onChange={(e) => setDownloadOffset(Number(e.target.value))}
+                                className="w-20 border rounded-lg px-2 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
+                                min={0}
                                 step={100}
                             />
                         </div>

@@ -18,6 +18,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
+from google import genai
+from google.genai import types
 
 from config import settings
 from ml.trainer import (
@@ -54,9 +56,10 @@ class TrainRequest(BaseModel):
     dataset_id: str
     stage: Literal["supervised", "soc"] = "supervised"
     epochs: int = Field(40, ge=1)
-    lr: float = Field(0.01, gt=0)
+    lr: float = Field(0.001, gt=0)
     batch_size: int = Field(4, ge=1)
     img_size: int = Field(512, ge=32)
+    num_workers: int = Field(4, ge=0)
     pretrained_ckpt: str | None = None
     run_name: str = Field(
         "run_001",
@@ -146,7 +149,7 @@ def _recommend_supervised_config(stats: dict) -> tuple[dict, list[str]]:
     cfg = {
         "stage": "supervised",
         "epochs": 40,
-        "lr": 0.01,
+        "lr": 0.001,
         "batch_size": 4,
         "img_size": 512,
         "semantic_loss_weight": 10.0,
@@ -158,13 +161,13 @@ def _recommend_supervised_config(stats: dict) -> tuple[dict, list[str]]:
     }
 
     if n < 300:
-        cfg.update({"epochs": 45, "lr": 0.004, "batch_size": 2, "train_split": 0.75, "val_split": 0.2})
+        cfg.update({"epochs": 45, "lr": 0.0005, "batch_size": 2, "train_split": 0.75, "val_split": 0.2})
         reasons.append("Dataset pequeño: más epochs, LR más bajo y validación más grande.")
     elif n < 2000:
-        cfg.update({"epochs": 35, "lr": 0.005, "batch_size": 4, "train_split": 0.8, "val_split": 0.15})
+        cfg.update({"epochs": 35, "lr": 0.001, "batch_size": 4, "train_split": 0.8, "val_split": 0.15})
         reasons.append("Dataset mediano: balance entre estabilidad y tiempo de entrenamiento.")
     else:
-        cfg.update({"epochs": 24, "lr": 0.008, "batch_size": 6, "train_split": 0.85, "val_split": 0.1})
+        cfg.update({"epochs": 24, "lr": 0.002, "batch_size": 6, "train_split": 0.85, "val_split": 0.1})
         reasons.append("Dataset grande: menos epochs y mayor throughput.")
 
     if min_side >= 1200:
@@ -231,8 +234,91 @@ def _recommend_soc_config(has_pretrained: bool, stats: dict) -> tuple[dict, list
     return cfg, reasons
 
 
-# Global SSE queue — created per training run
-_event_queue: asyncio.Queue | None = None
+class GeminiConfigRecommendation(BaseModel):
+    epochs: int = Field(description="Recommended number of epochs")
+    lr: float = Field(description="Recommended learning rate (e.g. 0.001)")
+    batch_size: int = Field(description="Recommended batch size (e.g. 2, 4, 8)")
+    img_size: int = Field(description="Recommended image size (e.g. 384, 512, 768)")
+    train_split: float = Field(description="Recommended train split ratio (e.g. 0.8)")
+    val_split: float = Field(description="Recommended val split ratio (e.g. 0.1)")
+    save_every: int = Field(description="Epoch interval to save checkpoints (e.g. 5)")
+    semantic_loss_weight: float = Field(description="Recommended weight for semantic loss (e.g. 10.0)")
+    detail_loss_weight: float = Field(description="Recommended weight for detail loss (e.g. 10.0)")
+    matte_loss_weight: float = Field(description="Recommended weight for matte loss (e.g. 1.0)")
+    soc_epochs: int = Field(description="Recommended epochs for SOC adaptation (e.g. 6, 8, 10)")
+    soc_lr: float = Field(description="Recommended learning rate for SOC (e.g. 0.00001)")
+    reasons: list[str] = Field(description="A list of 2-4 sentences in Spanish explaining why these specific parameters were chosen based on the dataset stats.")
+
+
+async def _ask_gemini_for_config(stats: dict, stage: str, has_pretrained: bool) -> tuple[dict, list[str]]:
+    """Query Gemini API for a dynamic configuration based on dataset stats."""
+    if not settings.gemini_api_key:
+        raise ValueError("Gemini API key is not configured.")
+
+    client = genai.Client(api_key=settings.gemini_api_key)
+    
+    prompt = f"""
+    You are an expert Machine Learning engineer specializing in fine-tuning MODNet models for image matting/background removal using PyTorch and AdamW optimizer.
+    
+    The user wants to run a '{stage}' training stage.
+    They have a pretrained checkpoint: {has_pretrained}.
+    
+    Here are the dataset statistics:
+    - Images: {stats['images_count']}
+    - Alphas (Masks): {stats['alphas_count']}
+    - Average Resolution: {stats['avg_width']}x{stats['avg_height']}
+    - Minimum Side Length: {stats['min_side']}
+    - Additional Gemini Assessment Summary (if any): {json.dumps(stats.get('gemini_summary') or {})}
+    
+    Please provide the optimal training hyperparameters based on these stats.
+    Important Guidelines:
+    1. Small datasets (< 1000) need more epochs (35-45) and lower learning rates (e.g., 0.0005) with AdamW to avoid overfitting.
+    2. Batch size should be small (2-4) for small datasets to introduce regularization.
+    3. If the average resolution is low (e.g., < 400), do NOT recommend an img_size of 1024. Use 384 or 512 to avoid blurry upscaling artifacts.
+    4. For SOC stage, normally recommend 6-10 soc_epochs and extremely low soc_lr (0.00001).
+    """
+
+    try:
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=settings.gemini_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=GeminiConfigRecommendation,
+                temperature=0.2,
+            )
+        )
+        
+        data = response.parsed
+        if not data:
+            raise ValueError("Gemini returned empty structured output.")
+
+        # Convert to the dictionary format expected by the frontend
+        cfg = {
+            "stage": stage,
+            "epochs": data.epochs,
+            "lr": data.lr,
+            "batch_size": data.batch_size,
+            "img_size": data.img_size,
+            "train_split": data.train_split,
+            "val_split": data.val_split,
+            "save_every": data.save_every,
+            "semantic_loss_weight": data.semantic_loss_weight,
+            "detail_loss_weight": data.detail_loss_weight,
+            "matte_loss_weight": data.matte_loss_weight,
+            "soc_epochs": data.soc_epochs,
+            "soc_lr": data.soc_lr,
+        }
+        return cfg, data.reasons
+
+    except Exception as e:
+        print(f"[gemini] Auto-config failed: {e}")
+        raise
+
+
+# Global SSE queues — one per connected client
+_event_queues: list[asyncio.Queue] = []
 _training_task: asyncio.Task | None = None
 
 
@@ -247,10 +333,24 @@ async def recommend_training_config(req: RecommendConfigRequest):
     if stats["images_count"] < 1:
         raise HTTPException(status_code=422, detail="Dataset has no images")
 
-    if req.stage == "soc":
-        recommendation, reasons = _recommend_soc_config(req.has_pretrained, stats)
-    else:
-        recommendation, reasons = _recommend_supervised_config(stats)
+    recommendation = None
+    reasons = []
+
+    # Attempt to use Gemini API if available
+    if settings.gemini_api_key:
+        try:
+            recommendation, reasons = await _ask_gemini_for_config(stats, req.stage, req.has_pretrained)
+            reasons.insert(0, "✨ Configuración generada inteligentemente por Gemini AI basándose en tu dataset.")
+        except Exception as e:
+            print(f"[recommend] Gemini config failed, falling back to heuristics: {e}")
+            recommendation = None
+
+    # Fallback to heuristics if Gemini fails or is not configured
+    if not recommendation:
+        if req.stage == "soc":
+            recommendation, reasons = _recommend_soc_config(req.has_pretrained, stats)
+        else:
+            recommendation, reasons = _recommend_supervised_config(stats)
 
     return {
         "dataset_id": req.dataset_id,
@@ -272,7 +372,7 @@ async def recommend_training_config(req: RecommendConfigRequest):
 @router.post("/start")
 async def start_training(req: TrainRequest):
     """Launch a fine-tuning run."""
-    global _event_queue, _training_task
+    global _event_queues, _training_task
 
     state = get_training_state()
     if state.status == "running":
@@ -295,7 +395,7 @@ async def start_training(req: TrainRequest):
         lr=req.lr,
         batch_size=req.batch_size,
         img_size=req.img_size,
-        num_workers=0,
+        num_workers=req.num_workers,
         semantic_loss_weight=req.semantic_loss_weight,
         detail_loss_weight=req.detail_loss_weight,
         matte_loss_weight=req.matte_loss_weight,
@@ -308,8 +408,6 @@ async def start_training(req: TrainRequest):
         run_name=req.run_name,
     )
 
-    _event_queue = asyncio.Queue(maxsize=200)
-
     if req.stage == "supervised":
         train_fn = run_supervised_training
     elif req.stage == "soc":
@@ -317,9 +415,11 @@ async def start_training(req: TrainRequest):
     else:
         raise HTTPException(status_code=400, detail=f"Unknown stage: {req.stage}")
 
+    loop = asyncio.get_running_loop()
+
     async def _run():
         try:
-            await asyncio.to_thread(train_fn, config, _event_queue)
+            await asyncio.to_thread(train_fn, config, _event_queues, loop)
         except Exception as e:
             print(f"[training error] {e}")
 
@@ -340,29 +440,33 @@ async def stream_metrics():
     """Server-Sent Events stream of training metrics."""
 
     async def event_generator():
-        # Send initial status
-        state = get_training_state()
-        yield f"data: {json.dumps({'type': 'status', 'status': state.status})}\n\n"
+        global _event_queues
+        q = asyncio.Queue(maxsize=200)
+        _event_queues.append(q)
+        
+        try:
+            # Send initial status
+            state = get_training_state()
+            yield f"data: {json.dumps({'type': 'status', 'status': state.status})}\n\n"
 
-        while True:
-            if _event_queue is None:
-                await asyncio.sleep(1)
-                continue
+            while True:
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=2.0)
+                    yield f"data: {json.dumps(event)}\n\n"
 
-            try:
-                event = await asyncio.wait_for(_event_queue.get(), timeout=2.0)
-                yield f"data: {json.dumps(event)}\n\n"
+                    # Stop streaming on terminal events
+                    if event.get("type") in ("finished", "error", "stopped"):
+                        break
+                except asyncio.TimeoutError:
+                    # Send heartbeat
+                    state = get_training_state()
+                    yield f"data: {json.dumps({'type': 'heartbeat', 'status': state.status, 'epoch': state.current_epoch})}\n\n"
 
-                # Stop streaming on terminal events
-                if event.get("type") in ("finished", "error", "stopped"):
-                    break
-            except asyncio.TimeoutError:
-                # Send heartbeat
-                state = get_training_state()
-                yield f"data: {json.dumps({'type': 'heartbeat', 'status': state.status, 'epoch': state.current_epoch})}\n\n"
-
-                if state.status in ("finished", "error", "stopped", "idle"):
-                    break
+                    if state.status in ("finished", "error", "stopped", "idle"):
+                        break
+        finally:
+            if q in _event_queues:
+                _event_queues.remove(q)
 
     return StreamingResponse(
         event_generator(),

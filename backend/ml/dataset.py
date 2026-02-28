@@ -303,6 +303,7 @@ class HFMattingDataset(MattingDataset):
         output_dir: str,
         split: str = "train",
         max_samples: int | None = None,
+        offset: int = 0,
         hf_token: str | None = None,
     ) -> Path:
         """
@@ -336,6 +337,7 @@ class HFMattingDataset(MattingDataset):
                     dataset_name,
                     split,
                     max_samples,
+                    offset,
                     hf_token,
                     images_dir,
                     alphas_dir,
@@ -351,6 +353,7 @@ class HFMattingDataset(MattingDataset):
                 saved = HFMattingDataset._download_via_snapshot(
                     dataset_name,
                     max_samples,
+                    offset,
                     hf_token,
                     images_dir,
                     alphas_dir,
@@ -380,6 +383,7 @@ class HFMattingDataset(MattingDataset):
         dataset_name: str,
         split: str,
         max_samples: int | None,
+        offset: int,
         hf_token: str | None,
         images_dir: Path,
         alphas_dir: Path,
@@ -388,8 +392,11 @@ class HFMattingDataset(MattingDataset):
         from datasets import load_dataset
 
         ds = load_dataset(dataset_name, split=split, token=hf_token)
-        if max_samples:
-            ds = ds.select(range(min(max_samples, len(ds))))
+        
+        # Apply offset and max_samples slicing
+        start_idx = min(offset, len(ds))
+        end_idx = min(start_idx + max_samples, len(ds)) if max_samples else len(ds)
+        ds = ds.select(range(start_idx, end_idx))
 
         saved = 0
         for i, sample in enumerate(ds):
@@ -419,7 +426,7 @@ class HFMattingDataset(MattingDataset):
                 alpha = img.split()[-1]
                 img = img.convert("RGB")
 
-            img_path = images_dir / f"{i:06d}.jpg"
+            img_path = images_dir / f"{i + offset:06d}.jpg"
             img.convert("RGB").save(img_path, quality=95)
             saved += 1
 
@@ -431,7 +438,7 @@ class HFMattingDataset(MattingDataset):
                         alpha = alpha.split()[-1]
                     elif alpha.mode != "L":
                         alpha = alpha.convert("L")
-                    alpha_path = alphas_dir / f"{i:06d}.png"
+                    alpha_path = alphas_dir / f"{i + offset:06d}.png"
                     alpha.save(alpha_path)
 
         return saved
@@ -440,6 +447,7 @@ class HFMattingDataset(MattingDataset):
     def _download_via_snapshot(
         dataset_name: str,
         max_samples: int | None,
+        offset: int,
         hf_token: str | None,
         images_dir: Path,
         alphas_dir: Path,
@@ -515,10 +523,11 @@ class HFMattingDataset(MattingDataset):
                 src_image_files = flat_files
 
         # ── Download and process ─────────────────────────
-        limit = max_samples or len(src_image_files)
+        start_idx = min(offset, len(src_image_files))
+        end_idx = min(start_idx + max_samples, len(src_image_files)) if max_samples else len(src_image_files)
         saved = 0
 
-        for i, rfilename in enumerate(src_image_files[:limit]):
+        for i, rfilename in enumerate(src_image_files[start_idx:end_idx]):
             try:
                 local_path = hf_hub_download(
                     repo_id=dataset_name,
@@ -531,12 +540,12 @@ class HFMattingDataset(MattingDataset):
                 # Handle RGBA as image + alpha
                 if img.mode == "RGBA" and not src_alpha_files:
                     alpha = img.split()[-1]
-                    img.convert("RGB").save(images_dir / f"{i:06d}.jpg", quality=95)
-                    alpha.save(alphas_dir / f"{i:06d}.png")
+                    img.convert("RGB").save(images_dir / f"{i + offset:06d}.jpg", quality=95)
+                    alpha.save(alphas_dir / f"{i + offset:06d}.png")
                     saved += 1
                     continue
 
-                img.convert("RGB").save(images_dir / f"{i:06d}.jpg", quality=95)
+                img.convert("RGB").save(images_dir / f"{i + offset:06d}.jpg", quality=95)
                 saved += 1
 
                 # Try to download matching alpha

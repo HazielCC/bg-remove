@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config import settings
 
@@ -50,6 +50,7 @@ class DownloadRequest(BaseModel):
     dataset_name: str  # e.g. "Voxel51/DUTS"
     split: str = "train"
     max_samples: int | None = None
+    offset: int = Field(0, ge=0)
 
 
 class ValidateRequest(BaseModel):
@@ -155,6 +156,7 @@ async def download_dataset(req: DownloadRequest):
             output_dir=str(output_dir),
             split=req.split,
             max_samples=req.max_samples,
+            offset=req.offset,
             hf_token=settings.hf_token,
         )
 

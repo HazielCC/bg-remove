@@ -1,5 +1,12 @@
 """FastAPI application for MODNet fine-tuning backend."""
 
+import torch
+
+try:
+    torch.multiprocessing.set_start_method('spawn', force=True)
+except RuntimeError:
+    pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager

@@ -66,7 +66,7 @@ class TrainingConfig:
     # Training params
     stage: str = "supervised"  # "supervised" or "soc"
     epochs: int = 40
-    lr: float = 0.01
+    lr: float = 0.001
     batch_size: int = 4
     img_size: int = 512
     num_workers: int = 0  # 0 for MPS compatibility
@@ -119,7 +119,8 @@ class TrainingState:
 
 # Global state
 training_state = TrainingState()
-training_event_queue: asyncio.Queue | None = None
+training_event_queues: list[asyncio.Queue] = []
+_main_loop: asyncio.AbstractEventLoop | None = None
 _stop_flag = False
 
 
@@ -133,12 +134,13 @@ def stop_training():
 
 
 def _send_event(event: dict):
-    """Send metric event to SSE queue (non-blocking)."""
-    if training_event_queue is not None:
-        try:
-            training_event_queue.put_nowait(event)
-        except asyncio.QueueFull:
-            pass  # skip if queue is full
+    """Send metric event to SSE queues (non-blocking)."""
+    if _main_loop is not None:
+        for q in list(training_event_queues):
+            try:
+                _main_loop.call_soon_threadsafe(q.put_nowait, event)
+            except asyncio.QueueFull:
+                pass  # skip if queue is full
 
 
 def _compute_train_val_sizes(
@@ -254,16 +256,20 @@ def supervised_loss(
 
 # ── Supervised training ──────────────────────────────────
 def run_supervised_training(
-    config: TrainingConfig, event_queue: asyncio.Queue | None = None
+    config: TrainingConfig, 
+    event_queues: list[asyncio.Queue] | None = None,
+    main_loop: asyncio.AbstractEventLoop | None = None
 ):
     """
     Run supervised fine-tuning of MODNet.
 
     This function runs synchronously (blocking). Call from asyncio.to_thread().
     """
-    global _stop_flag, training_state, training_event_queue
+    global _stop_flag, training_state, training_event_queues, _main_loop
     _stop_flag = False
-    training_event_queue = event_queue
+    if event_queues is not None:
+        training_event_queues = event_queues
+    _main_loop = main_loop
 
     device = _resolve_device(config.device)
     training_state = TrainingState(status="running", total_epochs=config.epochs)
@@ -312,11 +318,22 @@ def run_supervised_training(
             )
 
         # ── Optimizer ──
-        optimizer = torch.optim.SGD(model.parameters(), lr=config.lr, momentum=0.9)
-        scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=1e-4)
+        
+        scaler = None
+        if "cuda" in device.type or "mps" in device.type:
+            try:
+                scaler = torch.amp.GradScaler(device.type)
+            except Exception:
+                try:
+                    scaler = torch.cuda.amp.GradScaler() if "cuda" in device.type else None
+                except Exception:
+                    pass
+
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            step_size=max(1, int(config.epochs * 0.25)),
-            gamma=0.1,
+            T_max=config.epochs,
+            eta_min=config.lr * 0.01,
         )
 
         ckpt_dir = Path(config.checkpoint_dir) / config.run_name
@@ -345,26 +362,33 @@ def run_supervised_training(
 
                 optimizer.zero_grad()
 
-                pred_sem, pred_det, pred_mat = model(imgs, inference=False)
+                autocast_device = "cuda" if "cuda" in device.type else ("mps" if "mps" in device.type else "cpu")
+                with torch.autocast(device_type=autocast_device, enabled=autocast_device in ["cuda", "mps"]):
+                    pred_sem, pred_det, pred_mat = model(imgs, inference=False)
 
-                sem_loss, det_loss, mat_loss = supervised_loss(
-                    imgs,
-                    pred_sem,
-                    pred_det,
-                    pred_mat,
-                    alphas,
-                    trimaps,
-                    blurer,
-                    weights=(
-                        config.semantic_loss_weight,
-                        config.detail_loss_weight,
-                        config.matte_loss_weight,
-                    ),
-                )
-                loss = sem_loss + det_loss + mat_loss
+                    sem_loss, det_loss, mat_loss = supervised_loss(
+                        imgs,
+                        pred_sem,
+                        pred_det,
+                        pred_mat,
+                        alphas,
+                        trimaps,
+                        blurer,
+                        weights=(
+                            config.semantic_loss_weight,
+                            config.detail_loss_weight,
+                            config.matte_loss_weight,
+                        ),
+                    )
+                    loss = sem_loss + det_loss + mat_loss
 
-                loss.backward()
-                optimizer.step()
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    optimizer.step()
 
                 epoch_losses["semantic"] += sem_loss.item()
                 epoch_losses["detail"] += det_loss.item()
@@ -436,17 +460,15 @@ def run_supervised_training(
             training_state.eta_seconds = eta
 
             # Checkpoint
-            if (
-                epoch % config.save_every == 0
-                or val_loss < training_state.best_val_loss
-            ):
-                ckpt_path = ckpt_dir / f"modnet_epoch{epoch:03d}_val{val_loss:.4f}.ckpt"
+            if val_loss < training_state.best_val_loss:
+                training_state.best_val_loss = val_loss
+                best_path = ckpt_dir / "best.ckpt"
+                torch.save(model.state_dict(), best_path)
+
+            if epoch == config.epochs:
+                ckpt_path = ckpt_dir / "last.ckpt"
                 torch.save(model.state_dict(), ckpt_path)
                 training_state.checkpoints.append(str(ckpt_path))
-                if val_loss < training_state.best_val_loss:
-                    training_state.best_val_loss = val_loss
-                    best_path = ckpt_dir / "best.ckpt"
-                    torch.save(model.state_dict(), best_path)
 
             # Send SSE event
             _send_event(
@@ -493,15 +515,19 @@ def run_supervised_training(
 
 # ── SOC Adaptation ───────────────────────────────────────
 def run_soc_adaptation(
-    config: TrainingConfig, event_queue: asyncio.Queue | None = None
+    config: TrainingConfig, 
+    event_queues: list[asyncio.Queue] | None = None,
+    main_loop: asyncio.AbstractEventLoop | None = None
 ):
     """
     Self-supervised SOC adaptation (no labels needed).
     Uses consistency between sub-branches as supervision.
     """
-    global _stop_flag, training_state, training_event_queue
+    global _stop_flag, training_state, training_event_queues, _main_loop
     _stop_flag = False
-    training_event_queue = event_queue
+    if event_queues is not None:
+        training_event_queues = event_queues
+    _main_loop = main_loop
 
     device = _resolve_device(config.device)
     epochs = config.soc_epochs
@@ -532,6 +558,16 @@ def run_soc_adaptation(
             model.parameters(), lr=config.soc_lr, betas=(0.9, 0.99)
         )
 
+        scaler = None
+        if "cuda" in device.type or "mps" in device.type:
+            try:
+                scaler = torch.amp.GradScaler(device.type)
+            except Exception:
+                try:
+                    scaler = torch.cuda.amp.GradScaler() if "cuda" in device.type else None
+                except Exception:
+                    pass
+
         ckpt_dir = Path(config.checkpoint_dir) / config.run_name
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -553,45 +589,53 @@ def run_soc_adaptation(
                 imgs = imgs.to(device)
                 optimizer.zero_grad()
 
-                pred_sem, pred_det, pred_mat = model(imgs, inference=False)
+                autocast_device = "cuda" if "cuda" in device.type else ("mps" if "mps" in device.type else "cpu")
+                with torch.autocast(device_type=autocast_device, enabled=autocast_device in ["cuda", "mps"]):
+                    pred_sem, pred_det, pred_mat = model(imgs, inference=False)
 
-                # Backup predictions (frozen)
-                with torch.no_grad():
-                    _, b_det, b_mat = backup_model(imgs, inference=False)
+                    # Backup predictions (frozen)
+                    with torch.no_grad():
+                        _, b_det, b_mat = backup_model(imgs, inference=False)
 
-                # SOC semantic loss: consistency between semantic and matte
-                sem_target = F.interpolate(
-                    pred_mat.detach(),
-                    scale_factor=1 / 16,
-                    mode="bilinear",
-                    align_corners=False,
-                )
-                soc_sem_loss = F.mse_loss(pred_sem, sem_target) * 100.0
-
-                # SOC detail loss: consistency at boundaries using backup
-                # Generate boundary mask from predicted matte
-                mat_np = pred_mat.detach().squeeze().cpu().numpy()
-                boundary = _compute_boundary_mask(mat_np)
-                boundary_t = (
-                    torch.from_numpy(boundary)
-                    .unsqueeze(0)
-                    .unsqueeze(0)
-                    .float()
-                    .to(device)
-                )
-                boundary_t = F.interpolate(
-                    boundary_t, size=pred_det.shape[2:], mode="nearest"
-                )
-                if boundary_t.sum() > 0:
-                    soc_det_loss = (
-                        F.l1_loss(pred_det * boundary_t, b_det * boundary_t) * 1.0
+                    # SOC semantic loss: consistency between semantic and matte
+                    sem_target = F.interpolate(
+                        pred_mat.detach(),
+                        scale_factor=1 / 16,
+                        mode="bilinear",
+                        align_corners=False,
                     )
-                else:
-                    soc_det_loss = torch.tensor(0.0, device=device)
+                    soc_sem_loss = F.mse_loss(pred_sem, sem_target) * 100.0
 
-                loss = soc_sem_loss + soc_det_loss
-                loss.backward()
-                optimizer.step()
+                    # SOC detail loss: consistency at boundaries using backup
+                    # Generate boundary mask from predicted matte
+                    mat_np = pred_mat.detach().squeeze().cpu().numpy()
+                    boundary = _compute_boundary_mask(mat_np)
+                    boundary_t = (
+                        torch.from_numpy(boundary)
+                        .unsqueeze(0)
+                        .unsqueeze(0)
+                        .float()
+                        .to(device)
+                    )
+                    boundary_t = F.interpolate(
+                        boundary_t, size=pred_det.shape[2:], mode="nearest"
+                    )
+                    if boundary_t.sum() > 0:
+                        soc_det_loss = (
+                            F.l1_loss(pred_det * boundary_t, b_det * boundary_t) * 1.0
+                        )
+                    else:
+                        soc_det_loss = torch.tensor(0.0, device=device)
+
+                    loss = soc_sem_loss + soc_det_loss
+
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    optimizer.step()
 
                 total_loss += loss.item()
                 n += 1
@@ -640,8 +684,8 @@ def run_soc_adaptation(
                 }
             )
 
-            if epoch % config.save_every == 0 or epoch == epochs:
-                ckpt_path = ckpt_dir / f"modnet_soc_epoch{epoch:03d}.ckpt"
+            if epoch == epochs:
+                ckpt_path = ckpt_dir / "last_soc.ckpt"
                 torch.save(model.state_dict(), ckpt_path)
                 training_state.checkpoints.append(str(ckpt_path))
 
