@@ -79,20 +79,14 @@ export default function EdgeChatPage() {
     const userMessage: Message = { role: 'user', content: input };
     setMessages((prev) => [...prev, userMessage]);
     
-    // Qwen2.5 prompt format: <|im_start|>role
-content<|im_end|>
+    // Qwen2.5 prompt format: <|im_start|>role\ncontent<|im_end|>
 
     const history = [...messages, userMessage].slice(-6); // Últimos 6 mensajes
-    let prompt = '<|im_start|>system
-You are a helpful and concise AI assistant.<|im_end|>
-';
+    let prompt = '<|im_start|>system\nYou are a helpful and concise AI assistant.<|im_end|>\n';
     for (const msg of history) {
-      prompt += `<|im_start|>${msg.role}
-${msg.content}<|im_end|>
-`;
+      prompt += `<|im_start|>${msg.role}\n${msg.content}<|im_end|>\n`;
     }
-    prompt += '<|im_start|>assistant
-';
+    prompt += '<|im_start|>assistant\n';
 
     setIsGenerating(true);
     workerRef.current.postMessage({
