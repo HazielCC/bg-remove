@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 type Message = {
   role: 'user' | 'assistant';
@@ -11,9 +11,10 @@ export default function EdgeChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [status, setStatus] = useState<string>('Esperando inicialización...');
+  const [loadProgress, setLoadProgress] = useState<number | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  
+
   const workerRef = useRef<Worker | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -23,53 +24,92 @@ export default function EdgeChatPage() {
   }, [messages, isGenerating]);
 
   useEffect(() => {
-    // Inicializar el Web Worker
-    const worker = new Worker(new URL('./llm.worker.ts', import.meta.url));
-    workerRef.current = worker;
+    const initialize = async () => {
+      // Inicializar el Web Worker
+      const worker = new Worker(new URL('./llm.worker.ts', import.meta.url));
+      workerRef.current = worker;
 
-    worker.onmessage = (e) => {
-      const { type, message, text, done } = e.data;
+      worker.onmessage = (e) => {
+        const { type, message, text, done } = e.data;
 
-      if (type === 'STATUS') {
-        setStatus(message);
-      } else if (type === 'INIT_SUCCESS') {
-        setIsReady(true);
-        setStatus('Modelo listo.');
-      } else if (type === 'ERROR') {
-        setStatus(`Error: ${message}`);
-        setIsGenerating(false);
-      } else if (type === 'PARTIAL_RESULT') {
-        setMessages((prev) => {
-          const newMessages = [...prev];
-          const lastIndex = newMessages.length - 1;
-          
-          if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
-            newMessages[lastIndex] = {
-              ...newMessages[lastIndex],
-              content: newMessages[lastIndex].content + text,
-            };
-          } else {
-            newMessages.push({ role: 'assistant', content: text });
-          }
-          return newMessages;
-        });
-
-        if (done) {
-          setIsGenerating(false);
+        if (type === 'STATUS') {
+          setStatus(message);
+        } else if (type === 'INIT_SUCCESS') {
+          setIsReady(true);
           setStatus('Modelo listo.');
+        } else if (type === 'ERROR') {
+          setStatus(`Error: ${message}`);
+          setIsGenerating(false);
+        } else if (type === 'PARTIAL_RESULT') {
+          setMessages((prev) => {
+            const newMessages = [...prev];
+            const lastIndex = newMessages.length - 1;
+
+            if (lastIndex >= 0 && newMessages[lastIndex].role === 'assistant') {
+              newMessages[lastIndex] = {
+                ...newMessages[lastIndex],
+                content: newMessages[lastIndex].content + text,
+              };
+            } else {
+              newMessages.push({ role: 'assistant', content: text });
+            }
+            return newMessages;
+          });
+
+          if (done) {
+            setIsGenerating(false);
+            setStatus('Modelo listo.');
+          }
         }
+      };
+
+      // Descarga manual del modelo para mostrar porcentaje
+      const modelPath = '/models/litert/qwen2.5-1.5b-int8.tflite';
+      const modelUrl = `${window.location.origin}${modelPath}`;
+
+      const fetchWithProgress = async (url: string) => {
+        const resp = await fetch(url);
+        const contentLength = parseInt(resp.headers.get('Content-Length') || '0', 10);
+        if (!resp.body || !contentLength) return url; // fallback
+
+        const reader = resp.body.getReader();
+        let received = 0;
+        const chunks: Uint8Array[] = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            received += value.length;
+            const pct = Math.floor((received / contentLength) * 100);
+            setLoadProgress(pct);
+            setStatus(`Descargando modelo: ${pct}%`);
+          }
+        }
+
+        const blob = new Blob(chunks);
+        const blobUrl = URL.createObjectURL(blob);
+        return blobUrl;
+      };
+
+      try {
+        const urlToUse = await fetchWithProgress(modelUrl);
+        worker.postMessage({
+          type: 'INIT',
+          payload: { modelPath: urlToUse }
+        });
+      } catch (err: any) {
+        console.error('error downloading model', err);
+        setStatus('Error descargando modelo');
       }
+
+      return () => {
+        worker.terminate();
+      };
     };
 
-    // Usar la ruta estática para cargar el modelo
-    worker.postMessage({ 
-      type: 'INIT', 
-      payload: { modelPath: '/models/litert/qwen2.5-1.5b-int8.tflite' } 
-    });
-
-    return () => {
-      worker.terminate();
-    };
+    initialize();
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -78,7 +118,7 @@ export default function EdgeChatPage() {
 
     const userMessage: Message = { role: 'user', content: input };
     setMessages((prev) => [...prev, userMessage]);
-    
+
     // Qwen2.5 prompt format: <|im_start|>role\ncontent<|im_end|>
 
     const history = [...messages, userMessage].slice(-6); // Últimos 6 mensajes
@@ -93,15 +133,24 @@ export default function EdgeChatPage() {
       type: 'GENERATE',
       payload: { prompt },
     });
-    
+
     setInput('');
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-2rem)] max-w-4xl mx-auto p-4 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 rounded-xl my-4 shadow-xl border border-zinc-200 dark:border-zinc-800">
+    <div className="relative flex flex-col h-[calc(100vh-2rem)] max-w-4xl mx-auto p-4 bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 rounded-xl my-4 shadow-xl border border-zinc-200 dark:border-zinc-800">
+      {/* overlay while loading model */}
+      {!isReady && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 dark:bg-zinc-900/80 z-50">
+          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          {loadProgress !== null && (
+            <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-200">{loadProgress}%</p>
+          )}
+        </div>
+      )}
       <header className="py-4 border-b border-zinc-200 dark:border-zinc-800">
         <h1 className="text-2xl font-bold flex items-center gap-2">
-          Edge Chat 
+          Edge Chat
           <span className="text-xs bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100 px-2 py-1 rounded-full font-medium">Local / Offline</span>
         </h1>
         <p className="text-sm text-zinc-500 mt-1">
@@ -125,25 +174,24 @@ export default function EdgeChatPage() {
           messages.map((msg, index) => (
             <div
               key={index}
-              className={`p-3 rounded-xl max-w-[85%] ${
-                msg.role === 'user' 
-                  ? 'bg-blue-600 text-white ml-auto rounded-tr-sm' 
+              className={`p-3 rounded-xl max-w-[85%] ${msg.role === 'user'
+                  ? 'bg-blue-600 text-white ml-auto rounded-tr-sm'
                   : 'bg-zinc-100 dark:bg-zinc-800 rounded-tl-sm'
-              }`}
+                }`}
             >
               <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
             </div>
           ))
         )}
-        
+
         {isGenerating && status === 'Generando...' && messages[messages.length - 1]?.role === 'user' && (
-           <div className="p-4 rounded-xl max-w-[85%] bg-zinc-100 dark:bg-zinc-800 rounded-tl-sm w-16 flex justify-center">
-             <span className="flex gap-1 items-center">
-                <div className="w-2 h-2 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                <div className="w-2 h-2 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                <div className="w-2 h-2 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: '300ms' }}></div>
-             </span>
-           </div>
+          <div className="p-4 rounded-xl max-w-[85%] bg-zinc-100 dark:bg-zinc-800 rounded-tl-sm w-16 flex justify-center">
+            <span className="flex gap-1 items-center">
+              <div className="w-2 h-2 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: '0ms' }}></div>
+              <div className="w-2 h-2 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: '150ms' }}></div>
+              <div className="w-2 h-2 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: '300ms' }}></div>
+            </span>
+          </div>
         )}
         <div ref={messagesEndRef} />
       </main>
