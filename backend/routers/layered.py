@@ -11,7 +11,7 @@ from typing import Optional
 
 import torch
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException
-from PIL import Image
+from PIL import Image, ImageOps
 
 from config import settings
 
@@ -20,7 +20,11 @@ router = APIRouter()
 # Global variables
 _pipeline = None
 _load_lock = threading.Lock()
-_inference_lock = asyncio.Lock()
+_inference_lock = None # Initialized lazily
+
+# Note: _download_status is a global variable. In a production environment with multiple
+# Gunicorn/Uvicorn workers, this status will not be shared across processes, leading to
+# inconsistent UI feedback. For scaling, consider using Redis or a shared file lock.
 _download_status = {
     "progress": 0,  # 0 to 100
     "is_downloading": False,
@@ -28,6 +32,12 @@ _download_status = {
     "total_bytes": 0,
     "downloaded_bytes": 0
 }
+
+def get_inference_lock():
+    global _inference_lock
+    if _inference_lock is None:
+        _inference_lock = asyncio.Lock()
+    return _inference_lock
 
 class ProgressTracker:
     """Class-based tqdm proxy for snapshot_download."""
@@ -39,8 +49,10 @@ class ProgressTracker:
         self.iterable = iterable
         # Accumulate total size for all files being downloaded
         if total:
+            global _download_status
             with ProgressTracker._lock:
                 ProgressTracker._total_acc += total
+                _download_status["total_bytes"] = ProgressTracker._total_acc
 
     def __iter__(self):
         if self.iterable:
@@ -59,6 +71,12 @@ class ProgressTracker:
                 _download_status["is_downloading"] = True
 
     def close(self):
+        pass
+
+    def refresh(self):
+        pass
+
+    def set_description(self, desc, refresh=True):
         pass
 
     def __enter__(self):
@@ -134,25 +152,35 @@ def get_pipeline():
 async def decompose_image(
     image: UploadFile = File(...),
     prompt: str = Form("A detailed image decomposed into layers"),
-    layer_num: int = Form(4),
-    num_inference_steps: int = Form(50),
+    layer_num: int = Form(4, ge=2, le=12),
+    num_inference_steps: int = Form(50, ge=1, le=100),
     seed: Optional[int] = Form(None),
 ):
     """
     Decompose an image into multiple RGBA layers using Qwen-Image-Layered.
     """
     
+    # Validation: Limit file size to 15MB to prevent OOM
+    MAX_FILE_SIZE = 15 * 1024 * 1024 # 15MB
+    if image.size and image.size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 15MB.")
+
     # Read bytes early to avoid temporary file closure during long model loading
     image_bytes = await image.read()
+    
+    # Secondary check for cases where image.size was None
+    if len(image_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 15MB.")
 
-    async with _inference_lock:
+    async with get_inference_lock():
         def _process():
             pipeline = get_pipeline()
             device = settings.get_torch_device()
             
             # Load and prepare image
             try:
-                img = Image.open(BytesIO(image_bytes)).convert("RGBA")
+                img = Image.open(BytesIO(image_bytes))
+                img = ImageOps.exif_transpose(img).convert("RGBA")
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
                 

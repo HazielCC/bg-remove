@@ -68,29 +68,54 @@ export default function EdgeChatPage() {
       const modelUrl = `${window.location.origin}${modelPath}`;
 
       const fetchWithProgress = async (url: string) => {
+        const cache = await caches.open('llm-models');
+        const cachedResponse = await cache.match(url);
+        
+        if (cachedResponse) {
+          setStatus('Cargando modelo desde caché local...');
+          setLoadProgress(100);
+          const blob = await cachedResponse.blob();
+          return URL.createObjectURL(blob);
+        }
+
+        setStatus('Iniciando descarga (1.5GB aprox)...');
         const resp = await fetch(url);
-        const contentLength = parseInt(resp.headers.get('Content-Length') || '0', 10);
-        if (!resp.body || !contentLength) return url; // fallback
+        if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+        
+        const contentLength = parseInt(resp.headers.get('Content-Length') || '1610612736', 10); // Fallback to ~1.5GB
+        if (!resp.body) return url;
 
         const reader = resp.body.getReader();
         let received = 0;
-        const chunks: Uint8Array[] = [];
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (value) {
-            chunks.push(value);
-            received += value.length;
-            const pct = Math.floor((received / contentLength) * 100);
-            setLoadProgress(pct);
-            setStatus(`Descargando modelo: ${pct}%`);
+        
+        // Creamos un stream para ir guardando en caché conforme se descarga
+        const stream = new ReadableStream({
+          async start(controller) {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) {
+                controller.close();
+                break;
+              }
+              if (value) {
+                received += value.length;
+                const pct = Math.floor((received / contentLength) * 100);
+                setLoadProgress(pct);
+                setStatus(`Descargando modelo: ${pct}%`);
+                controller.enqueue(value);
+              }
+            }
           }
-        }
+        });
 
-        const blob = new Blob(chunks);
-        const blobUrl = URL.createObjectURL(blob);
-        return blobUrl;
+        // Clonamos la respuesta original y le inyectamos nuestro stream
+        const responseToCache = new Response(stream, { headers: resp.headers });
+        await cache.put(url, responseToCache);
+        
+        // Leemos desde la caché para asegurar persistencia
+        const savedResponse = await cache.match(url);
+        const blob = await savedResponse!.blob();
+        return URL.createObjectURL(blob);
       };
 
       try {
@@ -99,17 +124,19 @@ export default function EdgeChatPage() {
           type: 'INIT',
           payload: { modelPath: urlToUse }
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('error downloading model', err);
         setStatus('Error descargando modelo');
       }
-
-      return () => {
-        worker.terminate();
-      };
     };
 
     initialize();
+
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+      }
+    };
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -117,24 +144,26 @@ export default function EdgeChatPage() {
     if (!input.trim() || isGenerating || !isReady || !workerRef.current) return;
 
     const userMessage: Message = { role: 'user', content: input };
-    setMessages((prev) => [...prev, userMessage]);
-
-    // Qwen2.5 prompt format: <|im_start|>role\ncontent<|im_end|>
-
-    const history = [...messages, userMessage].slice(-6); // Últimos 6 mensajes
-    let prompt = '<|im_start|>system\nYou are a helpful and concise AI assistant.<|im_end|>\n';
-    for (const msg of history) {
-      prompt += `<|im_start|>${msg.role}\n${msg.content}<|im_end|>\n`;
-    }
-    prompt += '<|im_start|>assistant\n';
-
-    setIsGenerating(true);
-    workerRef.current.postMessage({
-      type: 'GENERATE',
-      payload: { prompt },
-    });
-
     setInput('');
+    setIsGenerating(true);
+
+    setMessages((prev) => {
+      const updatedMessages = [...prev, userMessage];
+      const history = updatedMessages.slice(-6); // Últimos 6 mensajes
+      
+      let prompt = '<|im_start|>system\nYou are a helpful and concise AI assistant.<|im_end|>\n';
+      for (const msg of history) {
+        prompt += `<|im_start|>${msg.role}\n${msg.content}<|im_end|>\n`;
+      }
+      prompt += '<|im_start|>assistant\n';
+
+      workerRef.current?.postMessage({
+        type: 'GENERATE',
+        payload: { prompt },
+      });
+
+      return updatedMessages;
+    });
   };
 
   return (
