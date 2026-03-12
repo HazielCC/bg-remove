@@ -9,7 +9,8 @@ export default function LayeredDecompositionPage() {
   const [loadingStep, setLoadingStep] = useState('');
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [layers, setLayers] = useState<string[]>([]);
-  
+  const [jobId, setJobId] = useState<string | null>(null);
+
   // Model parameters
   const [prompt, setPrompt] = useState('A detailed image decomposed into semantic layers');
   const [layerNum, setLayerNum] = useState(4);
@@ -21,13 +22,15 @@ export default function LayeredDecompositionPage() {
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Poll for download status
+  // Poll for download status and job result
   useEffect(() => {
     let timer: NodeJS.Timeout;
     let active = true;
 
     async function poll() {
       if (!loading || !active) return;
+
+      // Download / model-loading progress
       try {
         const res = await fetch('/api/layered/status');
         if (res.ok && active) {
@@ -37,14 +40,42 @@ export default function LayeredDecompositionPage() {
             setDownloadProgress(status.progress);
           } else {
             setDownloadProgress(null);
-            setLoadingStep('Ejecutando Qwen-Image-Layered (esto puede tardar)...');
           }
         }
       } catch (e) {
-        console.error("Status poll failed", e);
+        console.error('Status poll failed', e);
       }
+
+      // Job result polling
+      if (jobId && active) {
+        try {
+          const res = await fetch(`/api/layered/job/${jobId}`);
+          if (res.ok && active) {
+            const job = await res.json();
+            if (job.status === 'done' && job.result) {
+              setLayers(job.result.layers);
+              console.log(`[Qwen] Decomposed into ${job.result.count} layers`);
+              setLoading(false);
+              setLoadingStep('');
+              setJobId(null);
+              return;
+            } else if (job.status === 'error') {
+              alert(`Error: ${job.error ?? 'Error desconocido'}`);
+              setLoading(false);
+              setLoadingStep('');
+              setJobId(null);
+              return;
+            } else {
+              setLoadingStep('Ejecutando Qwen-Image-Layered (esto puede tardar)...');
+            }
+          }
+        } catch (e) {
+          console.error('Job poll failed', e);
+        }
+      }
+
       if (active && loading) {
-        timer = setTimeout(poll, 1000);
+        timer = setTimeout(poll, 1500);
       }
     }
 
@@ -56,7 +87,7 @@ export default function LayeredDecompositionPage() {
       active = false;
       clearTimeout(timer);
     };
-  }, [loading]);
+  }, [loading, jobId]);
 
   // Cleanup URLs on unmount
   useEffect(() => {
@@ -84,7 +115,7 @@ export default function LayeredDecompositionPage() {
     if (!file) return;
     setLoading(true);
     setLoadingStep('Iniciando descomposición...');
-    
+
     try {
       const formData = new FormData();
       formData.append('image', file);
@@ -93,14 +124,13 @@ export default function LayeredDecompositionPage() {
       formData.append('num_inference_steps', steps.toString());
       if (seed !== '') formData.append('seed', seed.toString());
 
-      setLoadingStep('Ejecutando Qwen-Image-Layered (esto puede tardar)...');
       const res = await fetch('/api/layered/decompose', {
         method: 'POST',
         body: formData,
       });
 
       if (!res.ok) {
-        let errorMsg = 'Error en la descomposición';
+        let errorMsg = 'Error al iniciar la descomposición';
         try {
           const err = await res.json();
           errorMsg = err.detail || errorMsg;
@@ -110,14 +140,12 @@ export default function LayeredDecompositionPage() {
         throw new Error(errorMsg);
       }
 
-      const data = await res.json();
-      setLayers(data.layers);
-      console.log(`[Qwen] Decomposed into ${data.count} layers`);
+      const { job_id } = await res.json();
+      setJobId(job_id); // polling loop takes it from here
     } catch (err: unknown) {
       console.error(err);
       const message = err instanceof Error ? err.message : 'Error desconocido';
       alert(`Error: ${message}`);
-    } finally {
       setLoading(false);
       setLoadingStep('');
     }
@@ -128,6 +156,7 @@ export default function LayeredDecompositionPage() {
     setFile(null);
     setFileUrl(null);
     setLayers([]);
+    setJobId(null);
     if (inputRef.current) inputRef.current.value = '';
   }
 
@@ -190,10 +219,10 @@ export default function LayeredDecompositionPage() {
             <div className="lg:col-span-1 space-y-6">
               <div className="bg-neutral-900 rounded-xl p-4 border border-neutral-800 space-y-4">
                 <h2 className="text-sm font-semibold text-neutral-300 uppercase tracking-wider mb-2">Configuración</h2>
-                
+
                 <div>
                   <label className="block text-xs text-neutral-500 mb-1">Prompt descriptivo</label>
-                  <textarea 
+                  <textarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 h-24 resize-none"
@@ -202,7 +231,7 @@ export default function LayeredDecompositionPage() {
 
                 <div>
                   <label className="block text-xs text-neutral-500 mb-1">Número de capas: {layerNum}</label>
-                  <input 
+                  <input
                     type="range" min="2" max="8" step="1"
                     value={layerNum}
                     onChange={(e) => setLayerNum(parseInt(e.target.value))}
@@ -212,7 +241,7 @@ export default function LayeredDecompositionPage() {
 
                 <div>
                   <label className="block text-xs text-neutral-500 mb-1">Pasos de inferencia: {steps}</label>
-                  <input 
+                  <input
                     type="range" min="20" max="100" step="5"
                     value={steps}
                     onChange={(e) => setSteps(parseInt(e.target.value))}
@@ -222,7 +251,7 @@ export default function LayeredDecompositionPage() {
 
                 <div>
                   <label className="block text-xs text-neutral-500 mb-1">Semilla (Seed - Opcional)</label>
-                  <input 
+                  <input
                     type="number"
                     placeholder="Aleatoria si está vacío"
                     value={seed}
@@ -269,7 +298,7 @@ export default function LayeredDecompositionPage() {
                   <p className="text-xs text-blue-300 text-center animate-pulse">
                     {loadingStep}
                   </p>
-                  
+
                   {downloadProgress !== null && (
                     <div className="space-y-1">
                       <div className="flex justify-between text-[10px] text-blue-400">
@@ -277,7 +306,7 @@ export default function LayeredDecompositionPage() {
                         <span>{downloadProgress}%</span>
                       </div>
                       <div className="w-full bg-blue-900/30 rounded-full h-1.5 overflow-hidden">
-                        <div 
+                        <div
                           className="bg-blue-500 h-full transition-all duration-500 ease-out"
                           style={{ width: `${downloadProgress}%` }}
                         />
@@ -317,15 +346,15 @@ export default function LayeredDecompositionPage() {
                       <div key={idx} className="space-y-2 group">
                         <div className="flex items-center justify-between px-1">
                           <span className="text-xs text-neutral-400">Capa {idx + 1}</span>
-                          <a 
-                            href={layer} 
+                          <a
+                            href={layer}
                             download={`capa-${idx + 1}.png`}
                             className="text-[10px] bg-neutral-800 hover:bg-neutral-700 px-2 py-1 rounded transition-colors opacity-0 group-hover:opacity-100"
                           >
                             Descargar PNG
                           </a>
                         </div>
-                        <div 
+                        <div
                           className="rounded-xl overflow-hidden border border-neutral-800 aspect-video relative"
                           style={{
                             backgroundImage: `url("data:image/svg+xml,%3Csvg width='20' height='20' xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='10' height='10' fill='%23111'/%3E%3Crect x='10' y='10' width='10' height='10' fill='%23111'/%3E%3Crect x='10' width='10' height='10' fill='%23181818'/%3E%3Crect y='10' width='10' height='10' fill='%23181818'/%3E%3C/svg%3E")`,

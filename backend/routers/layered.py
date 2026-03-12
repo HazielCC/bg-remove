@@ -6,12 +6,14 @@ Provides endpoints to decompose an image into multiple RGBA layers.
 import asyncio
 import base64
 import threading
+import uuid as _uuid_module
 from io import BytesIO
 from typing import Optional
 
 import torch
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException
 from PIL import Image, ImageOps
+from tqdm.auto import tqdm
 
 from config import settings
 
@@ -20,7 +22,12 @@ router = APIRouter()
 # Global variables
 _pipeline = None
 _load_lock = threading.Lock()
-_inference_lock = None # Initialized lazily
+_inference_lock = None  # Initialized lazily
+
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+_MAX_JOBS = 20  # Keep at most 20 jobs in memory
+_background_tasks: set = set()  # Prevent premature GC of fire-and-forget tasks
 
 # Note: _download_status is a global variable. In a production environment with multiple
 # Gunicorn/Uvicorn workers, this status will not be shared across processes, leading to
@@ -30,8 +37,9 @@ _download_status = {
     "is_downloading": False,
     "message": "",
     "total_bytes": 0,
-    "downloaded_bytes": 0
+    "downloaded_bytes": 0,
 }
+
 
 def get_inference_lock():
     global _inference_lock
@@ -39,56 +47,59 @@ def get_inference_lock():
         _inference_lock = asyncio.Lock()
     return _inference_lock
 
-class ProgressTracker:
-    """Class-based tqdm proxy for snapshot_download."""
+
+class ProgressTracker(tqdm):
+    """Silent tqdm subclass that mirrors download progress into API status."""
+
     _total_acc = 0
     _current_acc = 0
-    _lock = threading.Lock()
+    _status_lock = threading.Lock()
 
-    def __init__(self, iterable=None, total=None, desc=None, **kwargs):
-        self.iterable = iterable
+    def __init__(self, *args, **kwargs):
+        total = kwargs.get("total")
+        # huggingface_hub/tqdm wrappers may inject extra kwargs unsupported by some tqdm variants.
+        kwargs.pop("name", None)
+        kwargs.pop("lock_name", None)
+        kwargs.setdefault("disable", True)
+        super().__init__(*args, **kwargs)
+
         # Accumulate total size for all files being downloaded
         if total:
             global _download_status
-            with ProgressTracker._lock:
-                ProgressTracker._total_acc += total
+            with ProgressTracker._status_lock:
+                ProgressTracker._total_acc += int(total)
                 _download_status["total_bytes"] = ProgressTracker._total_acc
 
-    def __iter__(self):
-        if self.iterable:
-            for item in self.iterable:
-                yield item
-                self.update(1)
-
     def update(self, n=1):
+        displayed = super().update(n)
         global _download_status
-        with ProgressTracker._lock:
+        with ProgressTracker._status_lock:
             ProgressTracker._current_acc += n
             if ProgressTracker._total_acc > 0:
-                _download_status["downloaded_bytes"] = ProgressTracker._current_acc
+                _download_status["downloaded_bytes"] = min(
+                    ProgressTracker._current_acc,
+                    ProgressTracker._total_acc,
+                )
                 # Cap at 99 until fully loaded
-                _download_status["progress"] = min(99, int((ProgressTracker._current_acc / ProgressTracker._total_acc) * 100))
+                _download_status["progress"] = min(
+                    99,
+                    int(
+                        (
+                            _download_status["downloaded_bytes"]
+                            / ProgressTracker._total_acc
+                        )
+                        * 100
+                    ),
+                )
                 _download_status["is_downloading"] = True
+        return displayed
 
-    def close(self):
-        pass
-
-    def refresh(self):
-        pass
-
-    def set_description(self, desc, refresh=True):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        pass
 
 @router.get("/status")
 async def get_status():
     """Get the current download/loading status."""
     return _download_status
+
 
 def get_pipeline():
     global _pipeline, _download_status
@@ -96,46 +107,45 @@ def get_pipeline():
         if _pipeline is None:
             from diffusers import DiffusionPipeline
             from huggingface_hub import snapshot_download
-            
+
             repo_id = "Qwen/Qwen-Image-Layered"
             device = settings.get_torch_device()
-            
+
             _download_status["is_downloading"] = True
             _download_status["message"] = "Descargando modelo de Hugging Face..."
             _download_status["progress"] = 0
-            
+            _download_status["total_bytes"] = 0
+            _download_status["downloaded_bytes"] = 0
+
             try:
                 # Reset accumulators before download
-                with ProgressTracker._lock:
+                with ProgressTracker._status_lock:
                     ProgressTracker._total_acc = 0
                     ProgressTracker._current_acc = 0
 
-                snapshot_download(
-                    repo_id=repo_id,
-                    tqdm_class=ProgressTracker
-                )
-                
+                snapshot_download(repo_id=repo_id, tqdm_class=ProgressTracker)
+
                 # Update total bytes in status once known
-                with ProgressTracker._lock:
+                with ProgressTracker._status_lock:
                     _download_status["total_bytes"] = ProgressTracker._total_acc
 
                 _download_status["message"] = f"Cargando modelo en {device}..."
                 _download_status["progress"] = 100
-                
-                dtype = torch.float16 if device.type in ("mps", "cuda") else torch.float32
-                
+
+                dtype = (
+                    torch.float16 if device.type in ("mps", "cuda") else torch.float32
+                )
+
                 # trust_remote_code=True is required for Qwen's custom pipeline architecture.
                 # Safe here as "Qwen" is a verified/trusted organization on Hugging Face.
                 _pipeline = DiffusionPipeline.from_pretrained(
-                    repo_id,
-                    torch_dtype=dtype,
-                    trust_remote_code=True
+                    repo_id, torch_dtype=dtype, trust_remote_code=True
                 )
                 _pipeline.to(device)
-                
+
                 if device.type in ("mps", "cuda"):
                     _pipeline.enable_attention_slicing()
-                    
+
                 _download_status["is_downloading"] = False
                 _download_status["message"] = "Listo"
                 print("[layered] Model loaded successfully")
@@ -143,9 +153,104 @@ def get_pipeline():
                 _download_status["is_downloading"] = False
                 _download_status["message"] = f"Error: {str(e)}"
                 print(f"[layered] Error loading model: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to load Qwen model: {str(e)}")
-            
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to load Qwen model: {str(e)}"
+                )
+
     return _pipeline
+
+
+async def _run_decompose(
+    job_id: str,
+    image_bytes: bytes,
+    prompt: str,
+    layer_num: int,
+    num_inference_steps: int,
+    seed: Optional[int],
+) -> None:
+    """Background task: load model if needed, run inference, store result in _jobs."""
+    async with get_inference_lock():
+
+        def _process() -> dict:
+            pipeline = get_pipeline()
+            device = settings.get_torch_device()
+
+            try:
+                img = Image.open(BytesIO(image_bytes))
+                img = ImageOps.exif_transpose(img).convert("RGBA")
+            except Exception as e:
+                raise ValueError(f"Invalid image: {e}")
+
+            MAX_DIM = 1024
+            width, height = img.size
+            curr_w, curr_h = width, height
+            if max(curr_w, curr_h) > MAX_DIM:
+                scale = MAX_DIM / max(curr_w, curr_h)
+                curr_w = max(1, int(curr_w * scale))
+                curr_h = max(1, int(curr_h * scale))
+
+            new_width = max(16, round(curr_w / 16) * 16)
+            new_height = max(16, round(curr_h / 16) * 16)
+
+            if new_width != width or new_height != height:
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+            generator = None
+            if seed is not None:
+                generator = torch.Generator(device=device).manual_seed(seed)
+
+            print(
+                f"[layered] Job {job_id}: starting decomposition into {layer_num} layers..."
+            )
+            with torch.no_grad():
+                output = pipeline(
+                    prompt=prompt,
+                    image=img,
+                    layer_num=layer_num,
+                    height=new_height,
+                    width=new_width,
+                    generator=generator,
+                    num_inference_steps=num_inference_steps,
+                )
+
+            layers_b64 = []
+            for layer_img in output.images:
+                buf = BytesIO()
+                layer_img.save(buf, format="PNG")
+                layers_b64.append(
+                    f"data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}"
+                )
+
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+            elif device.type == "mps":
+                torch.mps.empty_cache()
+
+            return {
+                "layers": layers_b64,
+                "count": len(layers_b64),
+                "width": new_width,
+                "height": new_height,
+                "has_reference": True,
+            }
+
+        try:
+            result = await asyncio.to_thread(_process)
+            _jobs[job_id]["status"] = "done"
+            _jobs[job_id]["result"] = result
+            print(f"[layered] Job {job_id}: done ({result['count']} layers)")
+        except Exception as e:
+            _jobs[job_id]["status"] = "error"
+            _jobs[job_id]["error"] = str(e)
+            print(f"[layered] Job {job_id} failed: {e}")
+
+
+@router.get("/job/{job_id}")
+async def get_job(job_id: str):
+    """Get the status (pending/running/done/error) and result of a decomposition job."""
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return _jobs[job_id]
 
 
 @router.post("/decompose")
@@ -157,88 +262,35 @@ async def decompose_image(
     seed: Optional[int] = Form(None),
 ):
     """
-    Decompose an image into multiple RGBA layers using Qwen-Image-Layered.
+    Submit a decomposition job. Returns {job_id} immediately.
+    Poll GET /job/{job_id} for status and result.
     """
-    
-    # Validation: Limit file size to 15MB to prevent OOM
-    MAX_FILE_SIZE = 15 * 1024 * 1024 # 15MB
+    MAX_FILE_SIZE = 15 * 1024 * 1024
     if image.size and image.size > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large. Maximum size is 15MB.")
+        raise HTTPException(
+            status_code=413, detail="File too large. Maximum size is 15MB."
+        )
 
-    # Read bytes early to avoid temporary file closure during long model loading
     image_bytes = await image.read()
-    
-    # Secondary check for cases where image.size was None
     if len(image_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large. Maximum size is 15MB.")
+        raise HTTPException(
+            status_code=413, detail="File too large. Maximum size is 15MB."
+        )
 
-    async with get_inference_lock():
-        def _process():
-            pipeline = get_pipeline()
-            device = settings.get_torch_device()
-            
-            # Load and prepare image
-            try:
-                img = Image.open(BytesIO(image_bytes))
-                img = ImageOps.exif_transpose(img).convert("RGBA")
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
-                
-            # Limits to avoid OOM
-            MAX_DIM = 1024 
-            width, height = img.size
-            
-            curr_width, curr_height = width, height
-            if max(curr_width, curr_height) > MAX_DIM:
-                scale = MAX_DIM / max(curr_width, curr_height)
-                curr_width = max(1, int(curr_width * scale))
-                curr_height = max(1, int(curr_height * scale))
+    job_id = str(_uuid_module.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "pending", "result": None, "error": None}
+        # Evict oldest jobs beyond the cap
+        if len(_jobs) > _MAX_JOBS:
+            oldest = next(iter(_jobs))
+            del _jobs[oldest]
 
-            # Round to multiple of 16
-            new_width = max(16, round(curr_width / 16) * 16)
-            new_height = max(16, round(curr_height / 16) * 16)
-            
-            # Single resize operation to preserve quality
-            if new_width != width or new_height != height:
-                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-            # Set seed
-            generator = None
-            if seed is not None:
-                generator = torch.Generator(device=device).manual_seed(seed)
-
-            # Run inference
-            print(f"[layered] Starting decomposition into {layer_num} layers...")
-            with torch.no_grad():
-                output = pipeline(
-                    prompt=prompt,
-                    image=img,
-                    layer_num=layer_num,
-                    height=new_height,
-                    width=new_width,
-                    generator=generator,
-                    num_inference_steps=num_inference_steps,
-                )
-            
-            layers_b64 = []
-            for i, layer_img in enumerate(output.images):
-                buf = BytesIO()
-                layer_img.save(buf, format="PNG")
-                b64 = base64.b64encode(buf.getvalue()).decode()
-                layers_b64.append(f"data:image/png;base64,{b64}")
-                
-            # Free VRAM after inference
-            if device.type == "cuda":
-                torch.cuda.empty_cache()
-            elif device.type == "mps":
-                torch.mps.empty_cache()
-
-            return {
-                "layers": layers_b64,
-                "count": len(layers_b64),
-                "width": new_width,
-                "height": new_height,
-                "has_reference": True
-            }
-
-        return await asyncio.to_thread(_process)
+    task = asyncio.create_task(
+        _run_decompose(
+            job_id, image_bytes, prompt, layer_num, num_inference_steps, seed
+        )
+    )
+    # Prevent garbage collection before the task completes
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return {"job_id": job_id}
