@@ -13,7 +13,7 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-left">
           <Link
             href="/remove-bg"
             className="border rounded-xl p-6 hover:border-accent hover:bg-success dark:hover:bg-blue-950/20 transition-colors group dark:border-neutral-700 flex flex-col items-center text-center md:items-start md:text-left"
@@ -24,6 +24,19 @@ export default function Home() {
             </h2>
             <p className="text-sm text-secondary mt-1">
               Ejecuta inferencia MODNet en el navegador. Sube una imagen y obtén la máscara alfa.
+            </p>
+          </Link>
+
+          <Link
+            href="/layered"
+            className="border rounded-xl p-6 hover:border-accent hover:bg-success dark:hover:bg-yellow-950/20 transition-colors group dark:border-neutral-700 flex flex-col items-center text-center md:items-start md:text-left"
+          >
+            <div className="text-3xl mb-3">🪄</div>
+            <h2 className="text-lg font-semibold group-hover:text-accent">
+              Smart Layers
+            </h2>
+            <p className="text-sm text-secondary mt-1">
+              Descompone imágenes en capas RGBA inteligentes usando Qwen-Image-Layered localmente.
             </p>
           </Link>
 

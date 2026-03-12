@@ -46,12 +46,13 @@ app.add_middleware(
 )
 
 # ── routers ──────────────────────────────────────────────
-from routers import datasets, training, models, inference  # noqa: E402
+from routers import datasets, training, models, inference, layered  # noqa: E402
 
 app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
 app.include_router(training.router, prefix="/api/training", tags=["training"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(inference.router, prefix="/api/inference", tags=["inference"])
+app.include_router(layered.router, prefix="/api/layered", tags=["layered"])
 
 
 @app.get("/api/health")
