@@ -63,11 +63,15 @@ class ProgressTracker(tqdm):
         kwargs.setdefault("disable", True)
         super().__init__(*args, **kwargs)
 
+        resolved_total = total
+        if not resolved_total:
+            resolved_total = getattr(self, "total", None)
+
         # Accumulate total size for all files being downloaded
-        if total:
+        if isinstance(resolved_total, (int, float)) and resolved_total > 0:
             global _download_status
             with ProgressTracker._status_lock:
-                ProgressTracker._total_acc += int(total)
+                ProgressTracker._total_acc += int(resolved_total)
                 _download_status["total_bytes"] = ProgressTracker._total_acc
 
     def update(self, n=1):
