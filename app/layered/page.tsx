@@ -40,10 +40,15 @@ export default function LayeredDecompositionPage() {
             ? Math.max(0, Math.min(100, status.progress))
             : 0;
 
-          // Keep the progress UI visible while the model is being prepared.
-          setIsDownloadingModel(Boolean(status.is_downloading));
-          setLoadingStep(status.message || 'Preparando modelo...');
-          setDownloadProgress(progress);
+          if (status.is_downloading) {
+            setIsDownloadingModel(true);
+            setLoadingStep(status.message || 'Descargando modelo...');
+            setDownloadProgress(progress);
+          } else {
+            // Hide stale values from previous attempts when download is not active.
+            setIsDownloadingModel(false);
+            setDownloadProgress(null);
+          }
         }
       } catch (e) {
         console.error('Status poll failed', e);
@@ -73,7 +78,11 @@ export default function LayeredDecompositionPage() {
               setJobId(null);
               return;
             } else {
-              setLoadingStep('Ejecutando Qwen-Image-Layered (esto puede tardar)...');
+              if (job.status === 'pending' || job.status === 'waiting') {
+                setLoadingStep('En cola, esperando turno para procesar...');
+              } else {
+                setLoadingStep('Ejecutando Qwen-Image-Layered (esto puede tardar)...');
+              }
             }
           }
         } catch (e) {
@@ -122,6 +131,8 @@ export default function LayeredDecompositionPage() {
     if (!file) return;
     setLoading(true);
     setLoadingStep('Iniciando descomposición...');
+    setDownloadProgress(null);
+    setIsDownloadingModel(false);
 
     try {
       const formData = new FormData();

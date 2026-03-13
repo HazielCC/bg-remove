@@ -6,8 +6,10 @@ Provides endpoints to decompose an image into multiple RGBA layers.
 import asyncio
 import base64
 import threading
+import time
 import uuid as _uuid_module
 from io import BytesIO
+from pathlib import Path
 from typing import Optional
 
 import torch
@@ -40,6 +42,34 @@ _download_status = {
     "downloaded_bytes": 0,
 }
 
+_download_dir: Optional[Path] = None
+
+
+def _reset_download_status(message: str = "") -> None:
+    """Reset download progress to avoid stale values between attempts."""
+    global _download_status
+    with ProgressTracker._status_lock:
+        _download_status["progress"] = 0
+        _download_status["is_downloading"] = False
+        _download_status["message"] = message
+        _download_status["total_bytes"] = 0
+        _download_status["downloaded_bytes"] = 0
+
+
+def _safe_dir_size_bytes(root: Path) -> int:
+    """Best-effort recursive byte size for current download directory."""
+    try:
+        total = 0
+        for p in root.rglob("*"):
+            if p.is_file():
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    continue
+        return total
+    except OSError:
+        return 0
+
 
 def get_inference_lock():
     global _inference_lock
@@ -54,6 +84,7 @@ class ProgressTracker(tqdm):
     _total_acc = 0
     _current_acc = 0
     _status_lock = threading.Lock()
+    _last_scan_ts = 0.0
 
     def __init__(self, *args, **kwargs):
         total = kwargs.get("total")
@@ -72,30 +103,32 @@ class ProgressTracker(tqdm):
             global _download_status
             with ProgressTracker._status_lock:
                 ProgressTracker._total_acc += int(resolved_total)
-                _download_status["total_bytes"] = ProgressTracker._total_acc
+                # Use tqdm totals only as a fallback when metadata total is unavailable.
+                if _download_status["total_bytes"] <= 0:
+                    _download_status["total_bytes"] = ProgressTracker._total_acc
 
     def update(self, n=1):
         displayed = super().update(n)
-        global _download_status
+        global _download_status, _download_dir
         with ProgressTracker._status_lock:
             ProgressTracker._current_acc += n
-            if ProgressTracker._total_acc > 0:
-                _download_status["downloaded_bytes"] = min(
-                    ProgressTracker._current_acc,
-                    ProgressTracker._total_acc,
-                )
-                # Cap at 99 until fully loaded
-                _download_status["progress"] = min(
-                    99,
-                    int(
-                        (
-                            _download_status["downloaded_bytes"]
-                            / ProgressTracker._total_acc
-                        )
-                        * 100
-                    ),
-                )
-                _download_status["is_downloading"] = True
+            if _download_status["total_bytes"] > 0 and _download_dir is not None:
+                now = time.time()
+                if now - ProgressTracker._last_scan_ts >= 0.5:
+                    ProgressTracker._last_scan_ts = now
+                    downloaded = _safe_dir_size_bytes(_download_dir)
+                    _download_status["downloaded_bytes"] = min(
+                        downloaded,
+                        _download_status["total_bytes"],
+                    )
+                    # Cap at 99 until the model is fully initialized.
+                    _download_status["progress"] = min(
+                        99,
+                        int(
+                            (_download_status["downloaded_bytes"] / _download_status["total_bytes"]) * 100
+                        ),
+                    )
+                    _download_status["is_downloading"] = True
         return displayed
 
 
@@ -106,14 +139,16 @@ async def get_status():
 
 
 def get_pipeline():
-    global _pipeline, _download_status
+    global _pipeline, _download_status, _download_dir
     with _load_lock:
         if _pipeline is None:
             from diffusers import DiffusionPipeline
-            from huggingface_hub import snapshot_download
+            from huggingface_hub import HfApi, snapshot_download
 
             repo_id = "Qwen/Qwen-Image-Layered"
             device = settings.get_torch_device()
+            _download_dir = settings.model_path / "qwen-image-layered"
+            _download_dir.mkdir(parents=True, exist_ok=True)
 
             _download_status["is_downloading"] = True
             _download_status["message"] = "Descargando modelo de Hugging Face..."
@@ -122,16 +157,28 @@ def get_pipeline():
             _download_status["downloaded_bytes"] = 0
 
             try:
+                # Query expected total bytes for accurate percentage.
+                info = HfApi().model_info(repo_id, files_metadata=True)
+                total_bytes = sum((getattr(s, "size", 0) or 0) for s in (info.siblings or []))
+                if total_bytes > 0:
+                    _download_status["total_bytes"] = int(total_bytes)
+
                 # Reset accumulators before download
                 with ProgressTracker._status_lock:
                     ProgressTracker._total_acc = 0
                     ProgressTracker._current_acc = 0
+                    ProgressTracker._last_scan_ts = 0.0
 
-                snapshot_download(repo_id=repo_id, tqdm_class=ProgressTracker)
+                snapshot_download(
+                    repo_id=repo_id,
+                    local_dir=str(_download_dir),
+                    tqdm_class=ProgressTracker,
+                )
 
-                # Update total bytes in status once known
+                # Ensure final byte progress reaches full download.
                 with ProgressTracker._status_lock:
-                    _download_status["total_bytes"] = ProgressTracker._total_acc
+                    if _download_status["total_bytes"] > 0:
+                        _download_status["downloaded_bytes"] = _download_status["total_bytes"]
 
                 _download_status["message"] = f"Cargando modelo en {device}..."
                 _download_status["progress"] = 100
@@ -143,7 +190,7 @@ def get_pipeline():
                 # trust_remote_code=True is required for Qwen's custom pipeline architecture.
                 # Safe here as "Qwen" is a verified/trusted organization on Hugging Face.
                 _pipeline = DiffusionPipeline.from_pretrained(
-                    repo_id, torch_dtype=dtype, trust_remote_code=True
+                    str(_download_dir), torch_dtype=dtype, trust_remote_code=True
                 )
                 _pipeline.to(device)
 
@@ -173,7 +220,9 @@ async def _run_decompose(
     seed: Optional[int],
 ) -> None:
     """Background task: load model if needed, run inference, store result in _jobs."""
+    _jobs[job_id]["status"] = "waiting"
     async with get_inference_lock():
+        _jobs[job_id]["status"] = "running"
 
         def _process() -> dict:
             pipeline = get_pipeline()
@@ -281,9 +330,17 @@ async def decompose_image(
             status_code=413, detail="File too large. Maximum size is 15MB."
         )
 
+    # Clear stale progress from previous failed/interrupted attempts.
+    if _pipeline is None and not _download_status["is_downloading"]:
+        _reset_download_status("Esperando descarga del modelo...")
+
     job_id = str(_uuid_module.uuid4())
     with _jobs_lock:
-        _jobs[job_id] = {"status": "pending", "result": None, "error": None}
+        _jobs[job_id] = {
+            "status": "pending",
+            "result": None,
+            "error": None,
+        }
         # Evict oldest jobs beyond the cap
         if len(_jobs) > _MAX_JOBS:
             oldest = next(iter(_jobs))
