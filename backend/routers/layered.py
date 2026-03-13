@@ -125,7 +125,11 @@ class ProgressTracker(tqdm):
                     _download_status["progress"] = min(
                         99,
                         int(
-                            (_download_status["downloaded_bytes"] / _download_status["total_bytes"]) * 100
+                            (
+                                _download_status["downloaded_bytes"]
+                                / _download_status["total_bytes"]
+                            )
+                            * 100
                         ),
                     )
                     _download_status["is_downloading"] = True
@@ -159,7 +163,9 @@ def get_pipeline():
             try:
                 # Query expected total bytes for accurate percentage.
                 info = HfApi().model_info(repo_id, files_metadata=True)
-                total_bytes = sum((getattr(s, "size", 0) or 0) for s in (info.siblings or []))
+                total_bytes = sum(
+                    (getattr(s, "size", 0) or 0) for s in (info.siblings or [])
+                )
                 if total_bytes > 0:
                     _download_status["total_bytes"] = int(total_bytes)
 
@@ -178,7 +184,9 @@ def get_pipeline():
                 # Ensure final byte progress reaches full download.
                 with ProgressTracker._status_lock:
                     if _download_status["total_bytes"] > 0:
-                        _download_status["downloaded_bytes"] = _download_status["total_bytes"]
+                        _download_status["downloaded_bytes"] = _download_status[
+                            "total_bytes"
+                        ]
 
                 _download_status["message"] = f"Cargando modelo en {device}..."
                 _download_status["progress"] = 100
