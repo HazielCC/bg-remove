@@ -1,5 +1,6 @@
 """FastAPI application for MODNet fine-tuning backend."""
 
+import os
 import torch
 
 try:
@@ -9,6 +10,7 @@ except RuntimeError:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
 from config import settings
@@ -46,9 +48,7 @@ app.add_middleware(
 )
 
 # ── routers ──────────────────────────────────────────────
-import os
 from routers import datasets, training, models, inference, layered, video  # noqa: E402
-from fastapi.staticfiles import StaticFiles
 
 app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
 app.include_router(training.router, prefix="/api/training", tags=["training"])
@@ -58,8 +58,9 @@ app.include_router(layered.router, prefix="/api/layered", tags=["layered"])
 app.include_router(video.router, prefix="/api/video", tags=["video"])
 
 # Servir videos generados
-os.makedirs("exports/videos", exist_ok=True)
-app.mount("/videos", StaticFiles(directory="exports/videos"), name="videos")
+videos_dir = settings.export_path / "videos"
+videos_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/videos", StaticFiles(directory=str(videos_dir)), name="videos")
 
 @app.get("/api/health")
 async def health():

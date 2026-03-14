@@ -6,6 +6,8 @@ interface ModelStatus {
   is_downloaded: boolean;
   is_downloading: boolean;
   downloaded_gb: number;
+  total_gb: number;
+  progress: number;
   detail: string;
 }
 
@@ -18,9 +20,6 @@ export default function VideoTestPage() {
 
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null);
   const [checking, setChecking] = useState(true);
-
-  // Approximate target size of Wan2.2-TI2V-5B in GB
-  const EXPECTED_SIZE_GB = 34;
 
   const fetchStatus = async () => {
     try {
@@ -110,17 +109,17 @@ export default function VideoTestPage() {
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 text-center space-y-4">
             <h2 className="text-xl font-semibold text-blue-900">Modelo no detectado localmente</h2>
             <p className="text-sm text-blue-700">
-              {modelStatus?.detail || "Es necesario descargar el modelo Wan-AI/Wan2.2-TI2V-5B (~34 GB) antes de generar videos."}
+              {modelStatus?.detail || "Es necesario descargar el modelo Wan-AI/Wan2.2-TI2V-5B antes de generar videos."}
             </p>
 
             {modelStatus?.is_downloading ? (
               <div className="w-full bg-blue-200 rounded-full h-4 mt-4 overflow-hidden relative">
                 <div 
                   className="bg-blue-600 h-4 rounded-full transition-all duration-1000" 
-                  style={{ width: `${Math.min((modelStatus.downloaded_gb / EXPECTED_SIZE_GB) * 100, 100)}%` }}
+                  style={{ width: `${Math.max(5, modelStatus.progress)}%` }}
                 />
                 <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white drop-shadow-md">
-                  {modelStatus.downloaded_gb.toFixed(1)} GB / ~{EXPECTED_SIZE_GB} GB
+                  {modelStatus.downloaded_gb.toFixed(1)} GB / {modelStatus.total_gb > 0 ? `${modelStatus.total_gb.toFixed(1)} GB` : 'Calculando...'}
                 </div>
               </div>
             ) : (

@@ -15,9 +15,9 @@ from typing import Optional
 import torch
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException
 from PIL import Image, ImageOps
-from tqdm.auto import tqdm
 
 from config import settings
+from ml.hf_downloader import HFModelDownloader
 
 router = APIRouter()
 
@@ -31,45 +31,11 @@ _jobs_lock = threading.Lock()
 _MAX_JOBS = 20  # Keep at most 20 jobs in memory
 _background_tasks: set = set()  # Prevent premature GC of fire-and-forget tasks
 
-# Note: _download_status is a global variable. In a production environment with multiple
-# Gunicorn/Uvicorn workers, this status will not be shared across processes, leading to
-# inconsistent UI feedback. For scaling, consider using Redis or a shared file lock.
-_download_status = {
-    "progress": 0,  # 0 to 100
-    "is_downloading": False,
-    "message": "",
-    "total_bytes": 0,
-    "downloaded_bytes": 0,
-}
+MODEL_ID = "Qwen/Qwen-Image-Layered"
+_download_dir = settings.model_path / "qwen-image-layered"
+_download_dir.mkdir(parents=True, exist_ok=True)
 
-_download_dir: Optional[Path] = None
-
-
-def _reset_download_status(message: str = "") -> None:
-    """Reset download progress to avoid stale values between attempts."""
-    global _download_status
-    with ProgressTracker._status_lock:
-        _download_status["progress"] = 0
-        _download_status["is_downloading"] = False
-        _download_status["message"] = message
-        _download_status["total_bytes"] = 0
-        _download_status["downloaded_bytes"] = 0
-
-
-def _safe_dir_size_bytes(root: Path) -> int:
-    """Best-effort recursive byte size for current download directory."""
-    try:
-        total = 0
-        for p in root.rglob("*"):
-            if p.is_file():
-                try:
-                    total += p.stat().st_size
-                except OSError:
-                    continue
-        return total
-    except OSError:
-        return 0
-
+downloader = HFModelDownloader(model_id=MODEL_ID, local_dir=str(_download_dir))
 
 def get_inference_lock():
     global _inference_lock
@@ -77,126 +43,30 @@ def get_inference_lock():
         _inference_lock = asyncio.Lock()
     return _inference_lock
 
-
-class ProgressTracker(tqdm):
-    """Silent tqdm subclass that mirrors download progress into API status."""
-
-    _total_acc = 0
-    _current_acc = 0
-    _status_lock = threading.Lock()
-    _last_scan_ts = 0.0
-
-    def __init__(self, *args, **kwargs):
-        total = kwargs.get("total")
-        # huggingface_hub/tqdm wrappers may inject extra kwargs unsupported by some tqdm variants.
-        kwargs.pop("name", None)
-        kwargs.pop("lock_name", None)
-        kwargs.setdefault("disable", True)
-        super().__init__(*args, **kwargs)
-
-        resolved_total = total
-        if not resolved_total:
-            resolved_total = getattr(self, "total", None)
-
-        # Accumulate total size for all files being downloaded
-        if isinstance(resolved_total, (int, float)) and resolved_total > 0:
-            global _download_status
-            with ProgressTracker._status_lock:
-                ProgressTracker._total_acc += int(resolved_total)
-                # Use tqdm totals only as a fallback when metadata total is unavailable.
-                if _download_status["total_bytes"] <= 0:
-                    _download_status["total_bytes"] = ProgressTracker._total_acc
-
-    def update(self, n=1):
-        displayed = super().update(n)
-        global _download_status, _download_dir
-        with ProgressTracker._status_lock:
-            ProgressTracker._current_acc += n
-            if _download_status["total_bytes"] > 0 and _download_dir is not None:
-                now = time.time()
-                if now - ProgressTracker._last_scan_ts >= 0.5:
-                    ProgressTracker._last_scan_ts = now
-                    downloaded = _safe_dir_size_bytes(_download_dir)
-                    _download_status["downloaded_bytes"] = min(
-                        downloaded,
-                        _download_status["total_bytes"],
-                    )
-                    # Cap at 99 until the model is fully initialized.
-                    _download_status["progress"] = min(
-                        99,
-                        int(
-                            (
-                                _download_status["downloaded_bytes"]
-                                / _download_status["total_bytes"]
-                            )
-                            * 100
-                        ),
-                    )
-                    _download_status["is_downloading"] = True
-        return displayed
-
-
 @router.get("/status")
 async def get_status():
     """Get the current download/loading status."""
-    return _download_status
-
+    return downloader.get_status()
 
 def get_pipeline():
-    global _pipeline, _download_status, _download_dir
+    global _pipeline
     with _load_lock:
         if _pipeline is None:
             from diffusers import DiffusionPipeline
-            from huggingface_hub import HfApi, snapshot_download
 
-            repo_id = "Qwen/Qwen-Image-Layered"
             device = settings.get_torch_device()
-            _download_dir = settings.model_path / "qwen-image-layered"
-            _download_dir.mkdir(parents=True, exist_ok=True)
-
-            _download_status["is_downloading"] = True
-            _download_status["message"] = "Descargando modelo de Hugging Face..."
-            _download_status["progress"] = 0
-            _download_status["total_bytes"] = 0
-            _download_status["downloaded_bytes"] = 0
-
+            
             try:
-                # Query expected total bytes for accurate percentage.
-                info = HfApi().model_info(repo_id, files_metadata=True)
-                total_bytes = sum(
-                    (getattr(s, "size", 0) or 0) for s in (info.siblings or [])
-                )
-                if total_bytes > 0:
-                    _download_status["total_bytes"] = int(total_bytes)
+                # Nos aseguramos de descargarlo de manera síncrona si no está
+                if not downloader.check_exists():
+                    downloader.download_sync()
 
-                # Reset accumulators before download
-                with ProgressTracker._status_lock:
-                    ProgressTracker._total_acc = 0
-                    ProgressTracker._current_acc = 0
-                    ProgressTracker._last_scan_ts = 0.0
-
-                snapshot_download(
-                    repo_id=repo_id,
-                    local_dir=str(_download_dir),
-                    tqdm_class=ProgressTracker,
-                )
-
-                # Ensure final byte progress reaches full download.
-                with ProgressTracker._status_lock:
-                    if _download_status["total_bytes"] > 0:
-                        _download_status["downloaded_bytes"] = _download_status[
-                            "total_bytes"
-                        ]
-
-                _download_status["message"] = f"Cargando modelo en {device}..."
-                _download_status["progress"] = 100
-
+                downloader.set_message(f"Cargando modelo en {device}...")
+                
                 dtype = (
                     torch.float16 if device.type in ("mps", "cuda") else torch.float32
                 )
 
-                # trust_remote_code=True is required for Qwen's custom pipeline architecture.
-                # Safe here as "Qwen" is a verified/trusted organization on Hugging Face.
                 _pipeline = DiffusionPipeline.from_pretrained(
                     str(_download_dir), torch_dtype=dtype, trust_remote_code=True
                 )
@@ -205,19 +75,16 @@ def get_pipeline():
                 if device.type in ("mps", "cuda"):
                     _pipeline.enable_attention_slicing()
 
-                _download_status["is_downloading"] = False
-                _download_status["message"] = "Listo"
+                downloader.set_message("Listo")
                 print("[layered] Model loaded successfully")
             except Exception as e:
-                _download_status["is_downloading"] = False
-                _download_status["message"] = f"Error: {str(e)}"
+                downloader.set_message(f"Error: {str(e)}")
                 print(f"[layered] Error loading model: {e}")
                 raise HTTPException(
                     status_code=500, detail=f"Failed to load Qwen model: {str(e)}"
                 )
 
     return _pipeline
-
 
 async def _run_decompose(
     job_id: str,
@@ -339,8 +206,8 @@ async def decompose_image(
         )
 
     # Clear stale progress from previous failed/interrupted attempts.
-    if _pipeline is None and not _download_status["is_downloading"]:
-        _reset_download_status("Esperando descarga del modelo...")
+    if _pipeline is None and not downloader.get_status()["is_downloading"]:
+        downloader.reset_status("Esperando descarga del modelo...")
 
     job_id = str(_uuid_module.uuid4())
     with _jobs_lock:
