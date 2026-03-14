@@ -5,18 +5,26 @@ from pathlib import Path
 from typing import Optional
 
 from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub.constants import HF_HUB_CACHE
 from tqdm.auto import tqdm
 
 
 def _safe_dir_size_bytes(root: Path) -> int:
     """Calcula recursivamente el tamaño en bytes del directorio local.
-    Omite los symlinks (enlaces simbólicos) para no duplicar el peso de los blobs de HuggingFace."""
+    Omite los enlaces simbólicos y duros duplicados (común en Windows/HF cache)."""
     try:
         total = 0
+        seen_inodes = set()
         for p in root.rglob("*"):
             if p.is_file() and not p.is_symlink():
                 try:
-                    total += p.stat().st_size
+                    stat = p.stat()
+                    # Identificador único del archivo físico en el disco
+                    file_id = (stat.st_dev, stat.st_ino)
+                    if file_id in seen_inodes:
+                        continue
+                    seen_inodes.add(file_id)
+                    total += stat.st_size
                 except OSError:
                     continue
         return total
@@ -33,7 +41,7 @@ class HFModelDownloader:
         
         # Si no se especifica directorio local, usa la caché estándar de HuggingFace
         if self.local_dir is None:
-            self.cache_dir = Path(os.path.expanduser(f"~/.cache/huggingface/hub/models--{self.model_id.replace('/', '--')}"))
+            self.cache_dir = Path(HF_HUB_CACHE) / f"models--{self.model_id.replace('/', '--')}"
         else:
             self.cache_dir = Path(self.local_dir)
             
@@ -57,7 +65,12 @@ class HFModelDownloader:
             if self.status["is_downloaded"]:
                 return True
         try:
-            snapshot_download(repo_id=self.model_id, local_files_only=True, local_dir=self.local_dir)
+            kwargs = {"repo_id": self.model_id, "local_files_only": True}
+            if self.local_dir:
+                kwargs["local_dir"] = self.local_dir
+                kwargs["local_dir_use_symlinks"] = False
+                
+            snapshot_download(**kwargs)
             with self._status_lock:
                 self.status["is_downloaded"] = True
                 self.status["progress"] = 100
@@ -157,11 +170,16 @@ class HFModelDownloader:
                     return displayed
 
             print(f"[{self.model_id}] Iniciando descarga de {total_bytes / (1024**3):.2f} GB...")
-            snapshot_download(
-                repo_id=self.model_id,
-                local_dir=self.local_dir,
-                tqdm_class=ProgressTracker
-            )
+            
+            download_kwargs = {
+                "repo_id": self.model_id,
+                "tqdm_class": ProgressTracker
+            }
+            if self.local_dir:
+                download_kwargs["local_dir"] = self.local_dir
+                download_kwargs["local_dir_use_symlinks"] = False
+
+            snapshot_download(**download_kwargs)
 
             with self._status_lock:
                 if self.status["total_bytes"] > 0:
