@@ -48,7 +48,7 @@ class HFModelDownloader:
         }
         self._last_downloaded_bytes = 0
         self._last_speed_time = time.time()
-        self._status_lock = threading.Lock()
+        self._status_lock = threading.RLock()
         self._download_thread = None
 
     def check_exists(self) -> bool:
@@ -191,10 +191,16 @@ class HFModelDownloader:
     def start_download_bg(self):
         """Inicia la descarga como un proceso de fondo ('fire and forget')."""
         with self._status_lock:
+            if self.status["is_downloading"]:
+                return
             if self._download_thread is not None and self._download_thread.is_alive():
                 return
             if self.check_exists():
                 return
+            
+            # Avisamos a la UI inmediatamente antes de que levante el hilo
+            self.status["is_downloading"] = True
+            self.status["message"] = "Iniciando proceso de descarga..."
             
         def _task():
             try:
