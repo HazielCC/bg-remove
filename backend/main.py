@@ -46,14 +46,20 @@ app.add_middleware(
 )
 
 # ── routers ──────────────────────────────────────────────
-from routers import datasets, training, models, inference, layered  # noqa: E402
+import os
+from routers import datasets, training, models, inference, layered, video  # noqa: E402
+from fastapi.staticfiles import StaticFiles
 
 app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
 app.include_router(training.router, prefix="/api/training", tags=["training"])
 app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(inference.router, prefix="/api/inference", tags=["inference"])
 app.include_router(layered.router, prefix="/api/layered", tags=["layered"])
+app.include_router(video.router, prefix="/api/video", tags=["video"])
 
+# Servir videos generados
+os.makedirs("exports/videos", exist_ok=True)
+app.mount("/videos", StaticFiles(directory="exports/videos"), name="videos")
 
 @app.get("/api/health")
 async def health():

@@ -13,7 +13,7 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-left">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-left">
           <Link
             href="/remove-bg"
             className="border rounded-xl p-6 hover:border-accent hover:bg-success dark:hover:bg-blue-950/20 transition-colors group dark:border-neutral-700 flex flex-col items-center text-center md:items-start md:text-left"
@@ -64,6 +64,20 @@ export default function Home() {
             </h2>
             <p className="text-sm text-secondary mt-1">
               Conversa con el modelo Qwen 1.5B ejecutándose 100% en tu navegador vía WebGPU/Wasm.
+            </p>
+          </Link>
+
+          <Link
+            href="/video-test"
+            className="border rounded-xl p-6 hover:border-accent hover:bg-success dark:hover:bg-pink-950/20 transition-colors group dark:border-neutral-700 flex flex-col items-center text-center md:items-start md:text-left"
+          >
+            <div className="text-3xl mb-3">🎬</div>
+            <h2 className="text-lg font-semibold group-hover:text-accent flex gap-2 items-center">
+              Video Gen
+              <span className="text-[10px] bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">Beta</span>
+            </h2>
+            <p className="text-sm text-secondary mt-1">
+              Prueba la generación de video Text-to-Video utilizando Wan2.2-TI2V-5B de forma local.
             </p>
           </Link>
         </div>
