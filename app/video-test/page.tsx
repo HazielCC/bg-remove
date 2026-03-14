@@ -8,6 +8,7 @@ interface ModelStatus {
   downloaded_gb: number;
   total_gb: number;
   progress: number;
+  speed_mbps: number;
   detail: string;
 }
 
@@ -120,6 +121,7 @@ export default function VideoTestPage() {
                 />
                 <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white drop-shadow-md">
                   {modelStatus.downloaded_gb.toFixed(1)} GB / {modelStatus.total_gb > 0 ? `${modelStatus.total_gb.toFixed(1)} GB` : 'Calculando...'}
+                  {modelStatus.speed_mbps > 0 && ` (${modelStatus.speed_mbps.toFixed(1)} MB/s)`}
                 </div>
               </div>
             ) : (

@@ -64,6 +64,7 @@ class TestHFModelDownloader(unittest.TestCase):
         self.assertEqual(status["downloaded_bytes"], 2048)
         self.assertEqual(status["progress"], 100)
         self.assertEqual(status["message"], "Modelo listo y cacheado.")
+        self.assertTrue("speed_mbps" in status)
 
     @patch("ml.hf_downloader.snapshot_download")
     @patch("ml.hf_downloader.HfApi")

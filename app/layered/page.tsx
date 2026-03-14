@@ -8,6 +8,7 @@ export default function LayeredDecompositionPage() {
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [downloadStats, setDownloadStats] = useState({ total_bytes: 0, downloaded_bytes: 0, speed_mbps: 0 });
   const [isDownloadingModel, setIsDownloadingModel] = useState(false);
   const [layers, setLayers] = useState<string[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -44,10 +45,16 @@ export default function LayeredDecompositionPage() {
             setIsDownloadingModel(true);
             setLoadingStep(status.message || 'Descargando modelo...');
             setDownloadProgress(progress);
+            setDownloadStats({
+                total_bytes: status.total_bytes || 0,
+                downloaded_bytes: status.downloaded_bytes || 0,
+                speed_mbps: status.speed_mbps || 0
+            });
           } else {
             // Hide stale values from previous attempts when download is not active.
             setIsDownloadingModel(false);
             setDownloadProgress(null);
+            setDownloadStats({ total_bytes: 0, downloaded_bytes: 0, speed_mbps: 0 });
           }
         }
       } catch (e) {
@@ -66,6 +73,7 @@ export default function LayeredDecompositionPage() {
               setLoading(false);
               setLoadingStep('');
               setDownloadProgress(null);
+              setDownloadStats({ total_bytes: 0, downloaded_bytes: 0, speed_mbps: 0 });
               setIsDownloadingModel(false);
               setJobId(null);
               return;
@@ -74,6 +82,7 @@ export default function LayeredDecompositionPage() {
               setLoading(false);
               setLoadingStep('');
               setDownloadProgress(null);
+              setDownloadStats({ total_bytes: 0, downloaded_bytes: 0, speed_mbps: 0 });
               setIsDownloadingModel(false);
               setJobId(null);
               return;
@@ -132,6 +141,7 @@ export default function LayeredDecompositionPage() {
     setLoading(true);
     setLoadingStep('Iniciando descomposición...');
     setDownloadProgress(null);
+    setDownloadStats({ total_bytes: 0, downloaded_bytes: 0, speed_mbps: 0 });
     setIsDownloadingModel(false);
 
     try {
@@ -167,6 +177,7 @@ export default function LayeredDecompositionPage() {
       setLoading(false);
       setLoadingStep('');
       setDownloadProgress(null);
+      setDownloadStats({ total_bytes: 0, downloaded_bytes: 0, speed_mbps: 0 });
       setIsDownloadingModel(false);
     }
   }
@@ -178,6 +189,7 @@ export default function LayeredDecompositionPage() {
     setLayers([]);
     setJobId(null);
     setDownloadProgress(null);
+    setDownloadStats({ total_bytes: 0, downloaded_bytes: 0, speed_mbps: 0 });
     setIsDownloadingModel(false);
     if (inputRef.current) inputRef.current.value = '';
   }
@@ -327,6 +339,12 @@ export default function LayeredDecompositionPage() {
                         <span>{isDownloadingModel ? 'Descargando modelo...' : 'Preparando modelo...'}</span>
                         <span>{downloadProgress}%</span>
                       </div>
+                      {isDownloadingModel && downloadStats.total_bytes > 0 && (
+                        <div className="flex justify-between text-[10px] text-blue-500/70 mb-1">
+                          <span>{(downloadStats.downloaded_bytes / 1e9).toFixed(2)} GB / {(downloadStats.total_bytes / 1e9).toFixed(2)} GB</span>
+                          {downloadStats.speed_mbps > 0 && <span>{downloadStats.speed_mbps.toFixed(1)} MB/s</span>}
+                        </div>
+                      )}
                       <div className="w-full bg-blue-900/30 rounded-full h-1.5 overflow-hidden">
                         <div
                           className="bg-blue-500 h-full transition-all duration-500 ease-out"

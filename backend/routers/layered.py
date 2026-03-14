@@ -46,7 +46,15 @@ def get_inference_lock():
 @router.get("/status")
 async def get_status():
     """Get the current download/loading status."""
-    return downloader.get_status()
+    st = downloader.get_status()
+    return {
+        "progress": st["progress"],
+        "is_downloading": st["is_downloading"],
+        "message": st["message"],
+        "total_bytes": st["total_bytes"],
+        "downloaded_bytes": st["downloaded_bytes"],
+        "speed_mbps": st.get("speed_mbps", 0.0)
+    }
 
 def get_pipeline():
     global _pipeline

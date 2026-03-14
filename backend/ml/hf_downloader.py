@@ -9,11 +9,12 @@ from tqdm.auto import tqdm
 
 
 def _safe_dir_size_bytes(root: Path) -> int:
-    """Calcula recursivamente el tamaño en bytes del directorio local."""
+    """Calcula recursivamente el tamaño en bytes del directorio local.
+    Omite los symlinks (enlaces simbólicos) para no duplicar el peso de los blobs de HuggingFace."""
     try:
         total = 0
         for p in root.rglob("*"):
-            if p.is_file():
+            if p.is_file() and not p.is_symlink():
                 try:
                     total += p.stat().st_size
                 except OSError:
@@ -42,8 +43,11 @@ class HFModelDownloader:
             "progress": 0,
             "total_bytes": 0,
             "downloaded_bytes": 0,
+            "speed_mbps": 0.0,
             "message": "Modelo no inicializado."
         }
+        self._last_downloaded_bytes = 0
+        self._last_speed_time = time.time()
         self._status_lock = threading.Lock()
         self._download_thread = None
 
@@ -57,6 +61,7 @@ class HFModelDownloader:
             with self._status_lock:
                 self.status["is_downloaded"] = True
                 self.status["progress"] = 100
+                self.status["speed_mbps"] = 0.0
                 self.status["message"] = "Modelo listo y cacheado."
             return True
         except Exception:
@@ -84,6 +89,9 @@ class HFModelDownloader:
             self.status["message"] = message
             self.status["total_bytes"] = 0
             self.status["downloaded_bytes"] = 0
+            self.status["speed_mbps"] = 0.0
+            self._last_downloaded_bytes = 0
+            self._last_speed_time = time.time()
 
     def _run_download(self):
         """Lógica central de descarga y rastreo del progreso."""
@@ -93,6 +101,9 @@ class HFModelDownloader:
             self.status["progress"] = 0
             self.status["total_bytes"] = 0
             self.status["downloaded_bytes"] = 0
+            self.status["speed_mbps"] = 0.0
+            self._last_downloaded_bytes = _safe_dir_size_bytes(self.cache_dir)
+            self._last_speed_time = time.time()
 
         try:
             print(f"[{self.model_id}] Obteniendo metadatos...")
@@ -117,15 +128,32 @@ class HFModelDownloader:
                 def update(self, n=1):
                     displayed = super().update(n)
                     now = time.time()
-                    if now - self._last_scan_ts >= 0.5:
+                    dt = now - self._last_scan_ts
+                    
+                    if dt >= 0.5: # Escaneo ligero cada medio segundo
                         self._last_scan_ts = now
                         downloaded = _safe_dir_size_bytes(downloader.cache_dir)
+                        
                         with downloader._status_lock:
                             if downloader.status["total_bytes"] > 0:
+                                # Calcular velocidad en MB/s cada 1 segundo aprox
+                                speed_dt = now - downloader._last_speed_time
+                                if speed_dt >= 1.0:
+                                    diff = downloaded - downloader._last_downloaded_bytes
+                                    if diff > 0:
+                                        speed_bps = diff / speed_dt
+                                        downloader.status["speed_mbps"] = speed_bps / (1024 * 1024)
+                                    downloader._last_downloaded_bytes = downloaded
+                                    downloader._last_speed_time = now
+
                                 downloader.status["downloaded_bytes"] = min(downloaded, downloader.status["total_bytes"])
                                 downloader.status["progress"] = min(99, int((downloader.status["downloaded_bytes"] / downloader.status["total_bytes"]) * 100))
                                 downloader.status["is_downloading"] = True
-                                downloader.status["message"] = "Descargando modelo desde Hugging Face..."
+                                
+                                if downloader.status["speed_mbps"] > 0:
+                                    downloader.status["message"] = f"Descargando... {downloader.status['speed_mbps']:.1f} MB/s"
+                                else:
+                                    downloader.status["message"] = "Descargando modelo desde Hugging Face..."
                     return displayed
 
             print(f"[{self.model_id}] Iniciando descarga de {total_bytes / (1024**3):.2f} GB...")
@@ -141,6 +169,7 @@ class HFModelDownloader:
                 self.status["is_downloading"] = False
                 self.status["is_downloaded"] = True
                 self.status["progress"] = 100
+                self.status["speed_mbps"] = 0.0
                 self.status["message"] = "Modelo listo y cacheado."
                 
             print(f"[{self.model_id}] Descarga completada exitosamente.")
@@ -148,6 +177,7 @@ class HFModelDownloader:
         except Exception as e:
             with self._status_lock:
                 self.status["is_downloading"] = False
+                self.status["speed_mbps"] = 0.0
                 self.status["message"] = f"Error: {e}"
             print(f"[{self.model_id}] Error durante la descarga: {e}")
             raise e

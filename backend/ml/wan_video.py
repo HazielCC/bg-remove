@@ -30,6 +30,7 @@ def get_status() -> dict:
         "downloaded_gb": status["downloaded_bytes"] / (1024**3) if status["downloaded_bytes"] else 0.0,
         "total_gb": status["total_bytes"] / (1024**3) if status["total_bytes"] else 0.0,
         "progress": status["progress"],
+        "speed_mbps": status.get("speed_mbps", 0.0),
         "detail": status["message"]
     }
 
