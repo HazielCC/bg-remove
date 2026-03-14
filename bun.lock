@@ -6,6 +6,7 @@
       "name": "bg-remove",
       "dependencies": {
         "@huggingface/transformers": "^3.0.0",
+        "@mediapipe/tasks-genai": "^0.10.26",
         "next": "16.0.7",
         "react": "19.2.0",
         "react-dom": "19.2.0",
@@ -156,6 +157,8 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@mediapipe/tasks-genai": ["@mediapipe/tasks-genai@0.10.26", "", {}, "sha512-T93kfSsMWEQzdCfyyBpHWofrthU+5dYTKqxvmTDE5JhInUtjxceyDRD13q3f26Yi9ffOeFioXPXE3ZF0RL9hyw=="],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@0.2.12", "", { "dependencies": { "@emnapi/core": "^1.4.3", "@emnapi/runtime": "^1.4.3", "@tybys/wasm-util": "^0.10.0" } }, "sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ=="],
 
