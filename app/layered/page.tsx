@@ -8,6 +8,7 @@ export default function LayeredDecompositionPage() {
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [isDownloadingModel, setIsDownloadingModel] = useState(false);
   const [layers, setLayers] = useState<string[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
 
@@ -35,10 +36,17 @@ export default function LayeredDecompositionPage() {
         const res = await fetch('/api/layered/status');
         if (res.ok && active) {
           const status = await res.json();
+          const progress = typeof status.progress === 'number'
+            ? Math.max(0, Math.min(100, status.progress))
+            : 0;
+
           if (status.is_downloading) {
-            setLoadingStep(status.message);
-            setDownloadProgress(status.progress);
+            setIsDownloadingModel(true);
+            setLoadingStep(status.message || 'Descargando modelo...');
+            setDownloadProgress(progress);
           } else {
+            // Hide stale values from previous attempts when download is not active.
+            setIsDownloadingModel(false);
             setDownloadProgress(null);
           }
         }
@@ -57,16 +65,24 @@ export default function LayeredDecompositionPage() {
               console.log(`[Qwen] Decomposed into ${job.result.count} layers`);
               setLoading(false);
               setLoadingStep('');
+              setDownloadProgress(null);
+              setIsDownloadingModel(false);
               setJobId(null);
               return;
             } else if (job.status === 'error') {
               alert(`Error: ${job.error ?? 'Error desconocido'}`);
               setLoading(false);
               setLoadingStep('');
+              setDownloadProgress(null);
+              setIsDownloadingModel(false);
               setJobId(null);
               return;
             } else {
-              setLoadingStep('Ejecutando Qwen-Image-Layered (esto puede tardar)...');
+              if (job.status === 'pending' || job.status === 'waiting') {
+                setLoadingStep('En cola, esperando turno para procesar...');
+              } else {
+                setLoadingStep('Ejecutando Qwen-Image-Layered (esto puede tardar)...');
+              }
             }
           }
         } catch (e) {
@@ -115,6 +131,8 @@ export default function LayeredDecompositionPage() {
     if (!file) return;
     setLoading(true);
     setLoadingStep('Iniciando descomposición...');
+    setDownloadProgress(null);
+    setIsDownloadingModel(false);
 
     try {
       const formData = new FormData();
@@ -148,6 +166,8 @@ export default function LayeredDecompositionPage() {
       alert(`Error: ${message}`);
       setLoading(false);
       setLoadingStep('');
+      setDownloadProgress(null);
+      setIsDownloadingModel(false);
     }
   }
 
@@ -157,6 +177,8 @@ export default function LayeredDecompositionPage() {
     setFileUrl(null);
     setLayers([]);
     setJobId(null);
+    setDownloadProgress(null);
+    setIsDownloadingModel(false);
     if (inputRef.current) inputRef.current.value = '';
   }
 
@@ -302,7 +324,7 @@ export default function LayeredDecompositionPage() {
                   {downloadProgress !== null && (
                     <div className="space-y-1">
                       <div className="flex justify-between text-[10px] text-blue-400">
-                        <span>Descargando modelo...</span>
+                        <span>{isDownloadingModel ? 'Descargando modelo...' : 'Preparando modelo...'}</span>
                         <span>{downloadProgress}%</span>
                       </div>
                       <div className="w-full bg-blue-900/30 rounded-full h-1.5 overflow-hidden">
