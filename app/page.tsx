@@ -77,7 +77,7 @@ export default function Home() {
               <span className="text-[10px] bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">Beta</span>
             </h2>
             <p className="text-sm text-secondary mt-1">
-              Prueba la generación de video Text-to-Video utilizando Wan2.2-TI2V-5B de forma local.
+              Prueba la generación de video Text-to-Video utilizando CogVideoX-2B de forma local.
             </p>
           </Link>
         </div>

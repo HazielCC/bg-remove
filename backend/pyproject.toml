@@ -25,6 +25,8 @@ dependencies = [
     "diffusers>=0.31.0",
     "accelerate>=1.0.0",
     "transformers>=4.45.0",
+    "imageio>=2.37.2",
+    "imageio-ffmpeg>=0.6.0",
 ]
 
 [dependency-groups]
