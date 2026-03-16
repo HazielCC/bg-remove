@@ -10,8 +10,8 @@ try:
     import ml.hf_downloader
     print("✅ ml.hf_downloader importado correctamente.")
     
-    import ml.wan_video
-    print("✅ ml.wan_video importado correctamente.")
+    import ml.cogvideo
+    print("✅ ml.cogvideo importado correctamente.")
     
     import routers.layered
     print("✅ routers.layered importado correctamente.")

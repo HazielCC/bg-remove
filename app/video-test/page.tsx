@@ -101,8 +101,8 @@ export default function VideoTestPage() {
     <div className="min-h-screen bg-gray-50 text-gray-900 flex flex-col items-center py-12 px-4">
       <div className="max-w-2xl w-full bg-white rounded-2xl shadow p-8 space-y-6">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-gray-900 mb-2">Wan2.2 Video Sandbox</h1>
-          <p className="text-gray-500">Prueba rápida del modelo Wan2.2-TI2V-5B local.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-gray-900 mb-2">CogVideoX Video Sandbox</h1>
+          <p className="text-gray-500">Prueba rápida del modelo CogVideoX-2B local.</p>
         </div>
 
         {/* --- MODEL DOWNLOAD STATUS PANEL --- */}
@@ -110,7 +110,7 @@ export default function VideoTestPage() {
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 text-center space-y-4">
             <h2 className="text-xl font-semibold text-blue-900">Modelo no detectado localmente</h2>
             <p className="text-sm text-blue-700">
-              {modelStatus?.detail || "Es necesario descargar el modelo Wan-AI/Wan2.2-TI2V-5B antes de generar videos."}
+              {modelStatus?.detail || "Es necesario descargar el modelo THUDM/CogVideoX-2b antes de generar videos."}
             </p>
 
             {modelStatus?.is_downloading ? (
