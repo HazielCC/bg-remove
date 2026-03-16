@@ -1,14 +1,16 @@
 #!/bin/bash
 
-# Descargar Qwen2.5-1.5B-Instruct (dynamic_int8) optimizado con LiteRT
-# Origen: https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct
+# Descargar Qwen3.5-0.8B-LiteRT (int8) optimizado para Web/Mobile
+# Origen: https://huggingface.co/litert-community/Qwen3.5-0.8B-LiteRT
 
 MODEL_DIR="public/models/litert"
-MODEL_FILE="qwen2.5-1.5b-int8.tflite"
+MODEL_FILE="qwen3.5-0.8b-int8.tflite"
 
 mkdir -p "$MODEL_DIR"
 
-echo "Descargando modelo LiteRT (Aprox. 1.5GB)..."
-curl -L "https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/model_dynamic_int8.tflite?download=true" -o "$MODEL_DIR/$MODEL_FILE"
+echo "Descargando modelo LiteRT Qwen3.5 0.8B (Aprox. 800MB)..."
+# The exact filename usually follows standard LiteRT naming conventions in HF.
+# Often named model.tflite or qwen3.5-0.8b-instruct-int8.tflite. Let's use the standard resolve URL.
+curl -L "https://huggingface.co/litert-community/Qwen3.5-0.8B-LiteRT/resolve/main/model.tflite?download=true" -o "$MODEL_DIR/$MODEL_FILE"
 
 echo "Descarga completada en $MODEL_DIR/$MODEL_FILE"

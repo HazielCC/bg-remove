@@ -64,7 +64,7 @@ export default function EdgeChatPage() {
       };
 
       // Descarga manual del modelo para mostrar porcentaje
-      const modelPath = '/models/litert/qwen2.5-1.5b-int8.tflite';
+      const modelPath = '/models/litert/qwen3.5-0.8b-int8.tflite';
       const modelUrl = `${window.location.origin}${modelPath}`;
 
       const fetchWithProgress = async (url: string) => {
@@ -78,11 +78,11 @@ export default function EdgeChatPage() {
           return URL.createObjectURL(blob);
         }
 
-        setStatus('Iniciando descarga (1.5GB aprox)...');
+        setStatus('Iniciando descarga (800MB aprox)...');
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
         
-        const contentLength = parseInt(resp.headers.get('Content-Length') || '1610612736', 10); // Fallback to ~1.5GB
+        const contentLength = parseInt(resp.headers.get('Content-Length') || '838860800', 10); // Fallback to ~800MB
         if (!resp.body) return url;
 
         const reader = resp.body.getReader();
@@ -187,7 +187,7 @@ export default function EdgeChatPage() {
         </p>
         {!isReady && (
           <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-            Nota: La primera vez que cargues esta página, tu navegador descargará un modelo de ~1.5GB (Qwen2.5-1.5B). Esto puede tardar unos minutos dependiendo de tu conexión. Una vez cargado, permanecerá en caché.
+            Nota: La primera vez que cargues esta página, tu navegador descargará un modelo de ~800MB (Qwen3.5-0.8B). Esto puede tardar unos minutos dependiendo de tu conexión. Una vez cargado, permanecerá en caché.
           </p>
         )}
       </header>
