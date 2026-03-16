@@ -15,9 +15,11 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Usamos el repo oficial de THUDM para CogVideoX-2b
 MODEL_ID = "THUDM/CogVideoX-2b"
+_download_dir = settings.model_path / "cogvideox-2b"
+_download_dir.mkdir(parents=True, exist_ok=True)
 
 # Instanciar el helper unificado de descargas
-downloader = HFModelDownloader(model_id=MODEL_ID)
+downloader = HFModelDownloader(model_id=MODEL_ID, local_dir=str(_download_dir))
 
 # Variable global para mantener el modelo cargado en memoria (singleton)
 pipe = None
