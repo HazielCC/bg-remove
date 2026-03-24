@@ -104,7 +104,7 @@ export default function ExportPage() {
             return;
         }
         setLoading(true);
-        addLog(`Deploying ${selectedOnnx} → public/models/modnet/onnx/...`);
+        addLog(`Deploying ${selectedOnnx} → public/models/...`);
         try {
             const stem = selectedOnnx.split("/").pop()?.replace(".onnx", "") || "model";
             const result = await apiPost<{
@@ -113,12 +113,11 @@ export default function ExportPage() {
                 filename: string;
                 id?: string;
             }>(`/models/${encodeURIComponent(stem)}/deploy`, {
-                target_dir: "../public/models/modnet/onnx", // fallback
                 path: selectedOnnx,
                 name: deployName.trim() || undefined
             });
 
-            const destLabel = result.id ? `public/models/${result.id}` : `public/models/modnet/onnx`;
+            const destLabel = result.id ? `public/models/${result.id}` : "public/models";
             addLog(
                 `Deployed! ${result.filename ?? "model file"} → ${destLabel}`
             );
@@ -382,16 +381,16 @@ export default function ExportPage() {
                         <HelpTip text="Copia el ONNX elegido al directorio público para usarlo en la demo del navegador." />
                     </h3>
                     <p className="text-xs text-neutral-500 mb-3">
-                        Copy the selected ONNX model to{" "}
+                        Add the selected ONNX model to{" "}
                         <code className="px-1 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded">
-                            public/models/modnet/onnx/
+                            public/models/&lt;deployment-id&gt;/
                         </code>{" "}
-                        for use in the browser inference demo.
+                        so you can switch between multiple browser models.
                     </p>
                     <div className="mb-3">
                         <div className="text-xs text-neutral-500 mb-1 inline-flex items-center">
                             <span>ONNX Model to Deploy</span>
-                            <HelpTip text="Modelo ONNX final que quedará disponible en `public/models/modnet/onnx`." />
+                            <HelpTip text="Modelo ONNX final que se agregará como una nueva opción dentro de `public/models/<deployment-id>`." />
                         </div>
                         <select
                             value={selectedOnnx}
@@ -410,17 +409,17 @@ export default function ExportPage() {
                     <div className="mb-3">
                         <div className="text-xs text-neutral-500 mb-1 inline-flex items-center">
                             <span>Deployment Name (Optional)</span>
-                            <HelpTip text="Nombre único para este modelo (ej. 'v2-epoch10'). Si se deja vacío, sobrescribe el modelo por defecto." />
+                            <HelpTip text="Nombre único para este modelo (ej. 'v2-epoch10'). Si se deja vacío, se genera uno automáticamente y no se sobrescribe `modnet`." />
                         </div>
                         <input
                             type="text"
-                            placeholder="e.g. experiment-v1 (Optional)"
+                            placeholder="e.g. experiment-v1 (optional)"
                             value={deployName}
                             onChange={(e) => setDeployName(e.target.value.replace(/[^a-zA-Z0-9\-_]/g, ""))}
                             className="w-full border rounded-lg px-3 py-2 text-sm dark:bg-neutral-900 dark:border-neutral-700"
                         />
                         <p className="text-[10px] text-neutral-500 mt-1">
-                            Only alphanumeric characters, hyphens, and underscores allowed.
+                            If empty, a unique deployment id is generated automatically.
                         </p>
                     </div>
                     <button

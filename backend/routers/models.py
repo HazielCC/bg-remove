@@ -11,6 +11,7 @@ Endpoints:
 """
 
 import asyncio
+import re
 import shutil
 import time
 from pathlib import Path
@@ -35,7 +36,7 @@ class QuantizeRequest(BaseModel):
 
 
 class DeployRequest(BaseModel):
-    target_dir: str = "../public/models/modnet/onnx"  # Deprecated/Ignored if name is set
+    target_dir: str = "../public/models/modnet/onnx"  # Deprecated/ignored
     path: str | None = None
     name: str | None = None  # Optional name for the deployment (e.g. "v1-epoch-10")
 
@@ -103,6 +104,33 @@ def _build_export_stem(source_path: Path) -> str:
     if _is_under(source_path, settings.checkpoint_path):
         return f"{source_path.parent.name}_{source_path.stem}"
     return source_path.stem
+
+
+def _slugify_deployment_name(raw_name: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "-", raw_name.strip()).strip("-_")
+    return cleaned or "model"
+
+
+def _make_unique_deployment_name(base_name: str) -> str:
+    base_slug = _slugify_deployment_name(base_name)
+    candidate = base_slug
+    index = 2
+
+    while (settings.public_models_path / candidate).exists():
+        candidate = f"{base_slug}-{index}"
+        index += 1
+
+    return candidate
+
+
+def _resolve_deployment_name(req: DeployRequest, onnx_path: Path) -> str:
+    requested_name = req.name.strip() if req.name else ""
+    source_name = _build_export_stem(onnx_path)
+
+    if requested_name:
+        return _make_unique_deployment_name(requested_name)
+
+    return _make_unique_deployment_name(source_name)
 
 
 # ── List Models ──────────────────────────────────────────
@@ -262,77 +290,40 @@ async def quantize_model(model_id: str, req: QuantizeRequest):
 async def deploy_model(model_id: str, req: DeployRequest):
     """
     Copy an ONNX model to the frontend public directory.
-    If 'name' is provided, creates a new directory public/models/{name}.
-    If 'name' is NOT provided, overwrites public/models/modnet (legacy behavior).
+    Always creates a new deployment directory under public/models/{id}
+    so the frontend can switch between multiple deployed models.
     """
-    import re
-    
     # Prefer explicit path from request (avoids ambiguous stem matches)
     onnx_path = _resolve_onnx_path(req.path) if req.path else _find_onnx(model_id)
     if not onnx_path:
         raise HTTPException(status_code=404, detail=f"ONNX model not found: {model_id}")
 
-    # Validate name if provided
-    if req.name:
-        if not re.match(r"^[a-zA-Z0-9\-_]+$", req.name):
-            raise HTTPException(status_code=400, detail="Invalid path name. Use alphanumeric, hyphens, or underscores.")
-        
-        # New Deployment Mode
-        target_base = settings.public_models_path / req.name
-        target_onnx = target_base / "onnx"
-        target_onnx.mkdir(parents=True, exist_ok=True)
+    deployment_id = _resolve_deployment_name(req, onnx_path)
+    target_base = settings.public_models_path / deployment_id
+    target_onnx = target_base / "onnx"
+    target_onnx.mkdir(parents=True, exist_ok=True)
 
-        _copy_frontend_model_scaffold(target_base)
+    _copy_frontend_model_scaffold(target_base)
 
-        # 2. Determine target filename based on dtype
-        src_name = Path(onnx_path).name
-        if "fp16" in src_name:
-            dest_name = "model_fp16.onnx"
-        elif "uint8" in src_name or "quantized" in src_name:
-            dest_name = "model_quantized.onnx"
-        else:
-            dest_name = "model.onnx"
-
-        dest = target_onnx / dest_name
-        shutil.copy2(onnx_path, dest)
-        
-        return {
-            "status": "deployed",
-            "id": req.name,
-            "source": str(onnx_path),
-            "destination": str(dest),
-            "filename": dest_name,
-            "updated_at": _latest_file_mtime(target_base),
-        }
-
+    src_name = onnx_path.name
+    if "fp16" in src_name:
+        dest_name = "model_fp16.onnx"
+    elif "uint8" in src_name or "quantized" in src_name:
+        dest_name = "model_quantized.onnx"
     else:
-        # Legacy/Default Mode (Overwrite modnet)
-        target_base = settings.default_public_model_path
-        _copy_frontend_model_scaffold(target_base)
+        dest_name = "model.onnx"
 
-        target = target_base / "onnx"
-        target.mkdir(parents=True, exist_ok=True)
+    dest = target_onnx / dest_name
+    shutil.copy2(onnx_path, dest)
 
-        # Determine target filename based on dtype
-        src_name = Path(onnx_path).name
-        if "fp16" in src_name:
-            dest_name = "model_fp16.onnx"
-        elif "uint8" in src_name or "quantized" in src_name:
-            dest_name = "model_quantized.onnx"
-        else:
-            dest_name = "model.onnx"
-
-        dest = target / dest_name
-        shutil.copy2(onnx_path, dest)
-
-        return {
-            "status": "deployed",
-            "id": "modnet",
-            "source": str(onnx_path),
-            "destination": str(dest),
-            "filename": dest_name,
-            "updated_at": _latest_file_mtime(target_base),
-        }
+    return {
+        "status": "deployed",
+        "id": deployment_id,
+        "source": str(onnx_path),
+        "destination": str(dest),
+        "filename": dest_name,
+        "updated_at": _latest_file_mtime(target_base),
+    }
 
 
 # ── Compare Models ───────────────────────────────────────
