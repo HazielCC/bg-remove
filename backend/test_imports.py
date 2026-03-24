@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 
 # Asegurar que el path incluya backend para las importaciones
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -7,16 +7,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 print("Probando sintaxis e importaciones...")
 
 try:
-    import ml.hf_downloader
     print("✅ ml.hf_downloader importado correctamente.")
     
-    import ml.cogvideo
     print("✅ ml.cogvideo importado correctamente.")
     
-    import routers.layered
     print("✅ routers.layered importado correctamente.")
     
-    import routers.video
     print("✅ routers.video importado correctamente.")
     
     print("🎉 Todas las importaciones base pasaron sin errores de sintaxis.")

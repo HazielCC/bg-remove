@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import { apiDelete, apiFetch, apiPost } from "../lib/api";
 import HelpTip from "../components/help-tip";
@@ -653,15 +654,21 @@ export default function DatasetsPage() {
                                         className="border rounded-lg overflow-hidden dark:border-neutral-700"
                                     >
                                         <div className="grid grid-cols-2">
-                                            <img
+                                            <Image
                                                 src={s.image}
                                                 alt={s.filename}
+                                                width={s.width || 512}
+                                                height={s.height || 512}
+                                                unoptimized
                                                 className="w-full aspect-square object-cover"
                                             />
                                             {s.alpha ? (
-                                                <img
+                                                <Image
                                                     src={s.alpha}
                                                     alt="alpha"
+                                                    width={s.width || 512}
+                                                    height={s.height || 512}
+                                                    unoptimized
                                                     className="w-full aspect-square object-cover bg-black"
                                                 />
                                             ) : (

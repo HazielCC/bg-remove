@@ -1,13 +1,11 @@
-import os
 import uuid
-import torch
-from pathlib import Path
 
+import torch
 from diffusers import CogVideoXPipeline
 from diffusers.utils import export_to_video
 
-from ml.hf_downloader import HFModelDownloader
 from config import settings
+from ml.hf_downloader import HFModelDownloader
 
 # Directorio de exportación
 OUTPUT_DIR = settings.export_path / "videos"
@@ -72,7 +70,7 @@ def get_model():
 
 def generate(prompt: str, duration: int = 4) -> str:
     print(f"[CogVideoX] Iniciando generación de video: '{prompt}'")
-    downloader.set_message(f"Generando video...")
+    downloader.set_message("Generando video...")
     
     pipe = get_model()
 

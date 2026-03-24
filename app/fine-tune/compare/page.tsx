@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { apiFetch, apiPost, apiUpload } from "../lib/api";
 import HelpTip from "../components/help-tip";
@@ -187,25 +188,34 @@ export default function ComparePage() {
                     <div className="grid grid-cols-3 gap-4">
                         <div>
                             <div className="text-xs text-neutral-500 mb-1">Original</div>
-                            <img
+                            <Image
                                 src={customResults.original}
                                 alt="original"
+                                width={512}
+                                height={512}
+                                unoptimized
                                 className="w-full rounded-lg border dark:border-neutral-700"
                             />
                         </div>
                         <div>
                             <div className="text-xs text-neutral-500 mb-1">Model A</div>
-                            <img
+                            <Image
                                 src={customResults.matte_a}
                                 alt="mask A"
+                                width={512}
+                                height={512}
+                                unoptimized
                                 className="w-full rounded-lg border dark:border-neutral-700 bg-black"
                             />
                         </div>
                         <div>
                             <div className="text-xs text-neutral-500 mb-1">Model B</div>
-                            <img
+                            <Image
                                 src={customResults.matte_b}
                                 alt="mask B"
+                                width={512}
+                                height={512}
+                                unoptimized
                                 className="w-full rounded-lg border dark:border-neutral-700 bg-black"
                             />
                         </div>
@@ -229,25 +239,34 @@ export default function ComparePage() {
                                     <div className="text-xs text-neutral-500 mb-1">
                                         {r.filename}
                                     </div>
-                                    <img
+                                    <Image
                                         src={r.original}
                                         alt={r.filename}
+                                        width={512}
+                                        height={512}
+                                        unoptimized
                                         className="w-full rounded border dark:border-neutral-700"
                                     />
                                 </div>
                                 <div>
                                     <div className="text-xs text-neutral-500 mb-1">Model A</div>
-                                    <img
+                                    <Image
                                         src={r.mask_a}
                                         alt="A"
+                                        width={512}
+                                        height={512}
+                                        unoptimized
                                         className="w-full rounded border dark:border-neutral-700 bg-black"
                                     />
                                 </div>
                                 <div>
                                     <div className="text-xs text-neutral-500 mb-1">Model B</div>
-                                    <img
+                                    <Image
                                         src={r.mask_b}
                                         alt="B"
+                                        width={512}
+                                        height={512}
+                                        unoptimized
                                         className="w-full rounded border dark:border-neutral-700 bg-black"
                                     />
                                 </div>

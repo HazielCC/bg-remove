@@ -52,6 +52,59 @@ class BenchmarkRequest(BaseModel):
     img_size: int = 512
 
 
+def _latest_file_mtime(path: Path) -> float | None:
+    latest: float | None = None
+    for file_path in path.rglob("*"):
+        if not file_path.is_file():
+            continue
+        mtime = file_path.stat().st_mtime
+        if latest is None or mtime > latest:
+            latest = mtime
+    return latest
+
+
+def _serialize_deployed_model(model_dir: Path, name: str) -> dict:
+    return {
+        "id": model_dir.name,
+        "name": name,
+        "updated_at": _latest_file_mtime(model_dir),
+    }
+
+
+def _copy_frontend_model_scaffold(target_base: Path):
+    """Copy the config files expected by transformers.js for browser inference."""
+    source_base = settings.default_public_model_path
+    configs = ["config.json", "preprocessor_config.json", "quantize_config.json"]
+
+    for cfg in configs:
+        src_cfg = source_base / cfg
+        dest_cfg = target_base / cfg
+        if not src_cfg.exists():
+            continue
+        if src_cfg.resolve() == dest_cfg.resolve():
+            continue
+        shutil.copy2(src_cfg, dest_cfg)
+
+    source_onnx = source_base / "onnx"
+    target_onnx = target_base / "onnx"
+    target_onnx.mkdir(parents=True, exist_ok=True)
+    for cfg in configs:
+        src_cfg = source_onnx / cfg
+        dest_cfg = target_onnx / cfg
+        if not src_cfg.exists():
+            continue
+        if src_cfg.resolve() == dest_cfg.resolve():
+            continue
+        shutil.copy2(src_cfg, dest_cfg)
+
+
+def _build_export_stem(source_path: Path) -> str:
+    """Derive a stable export name that preserves the run name for checkpoints."""
+    if _is_under(source_path, settings.checkpoint_path):
+        return f"{source_path.parent.name}_{source_path.stem}"
+    return source_path.stem
+
+
 # ── List Models ──────────────────────────────────────────
 @router.get("/deployed")
 async def list_deployed_models():
@@ -59,23 +112,26 @@ async def list_deployed_models():
     List models deployed to the public/models directory.
     Returns a list of {id, name} objects.
     """
-    public_models_dir = Path("../public/models")
+    public_models_dir = settings.public_models_path
+    default_model_dir = settings.default_public_model_path
     if not public_models_dir.exists():
         return [{"id": "modnet", "name": "Default (In-Browser)"}]
 
     deployed = []
     
     # Always include the default modnet if it exists or as a fallback
-    modnet_path = public_models_dir / "modnet"
-    if (modnet_path / "config.json").exists():
-        deployed.append({"id": "modnet", "name": "Default (In-Browser)"})
+    if (default_model_dir / "config.json").exists():
+        deployed.append(_serialize_deployed_model(default_model_dir, "Default (In-Browser)"))
 
     # Scan for other directories
-    for p in public_models_dir.iterdir():
-        if p.is_dir() and p.name != "modnet":
+    for p in sorted(public_models_dir.iterdir()):
+        if p.is_dir() and p.name != default_model_dir.name:
             # Check if it looks like a valid model dir (has config.json)
             if (p / "config.json").exists():
-                deployed.append({"id": p.name, "name": p.name})
+                deployed.append(_serialize_deployed_model(p, p.name))
+
+    if not deployed:
+        return [{"id": "modnet", "name": "Default (In-Browser)", "updated_at": None}]
 
     return deployed
 
@@ -151,7 +207,7 @@ async def export_onnx(model_id: str, req: ExportRequest):
     if not ckpt_path:
         raise HTTPException(status_code=404, detail=f"Checkpoint not found: {model_id}")
 
-    output_name = Path(ckpt_path).stem + ".onnx"
+    output_name = _build_export_stem(Path(ckpt_path)) + ".onnx"
     output_path = settings.export_path / output_name
 
     try:
@@ -222,27 +278,11 @@ async def deploy_model(model_id: str, req: DeployRequest):
             raise HTTPException(status_code=400, detail="Invalid path name. Use alphanumeric, hyphens, or underscores.")
         
         # New Deployment Mode
-        target_base = Path("../public/models") / req.name
+        target_base = settings.public_models_path / req.name
         target_onnx = target_base / "onnx"
         target_onnx.mkdir(parents=True, exist_ok=True)
-        
-        # 1. Copy config files from base modnet (required for transformers.js)
-        # 1. Copy config files from base modnet or backend defaults (required for transformers.js)
-        base_modnet = Path("../public/models/modnet")
-        backend_defaults = Path("ml/configs")
-        configs = ["config.json", "preprocessor_config.json", "quantize_config.json"]
-        
-        for cfg in configs:
-            # Try public/models/modnet first (to preserve user customizations)
-            src_cfg = base_modnet / cfg
-            if not src_cfg.exists():
-                # Fallback to backend defaults
-                src_cfg = backend_defaults / cfg
-            
-            if src_cfg.exists():
-                shutil.copy2(src_cfg, target_base / cfg)
-            else:
-                 print(f"Warning: Config {cfg} not found in {base_modnet} or {backend_defaults}")
+
+        _copy_frontend_model_scaffold(target_base)
 
         # 2. Determine target filename based on dtype
         src_name = Path(onnx_path).name
@@ -261,11 +301,16 @@ async def deploy_model(model_id: str, req: DeployRequest):
             "id": req.name,
             "source": str(onnx_path),
             "destination": str(dest),
+            "filename": dest_name,
+            "updated_at": _latest_file_mtime(target_base),
         }
 
     else:
         # Legacy/Default Mode (Overwrite modnet)
-        target = Path(req.target_dir)
+        target_base = settings.default_public_model_path
+        _copy_frontend_model_scaffold(target_base)
+
+        target = target_base / "onnx"
         target.mkdir(parents=True, exist_ok=True)
 
         # Determine target filename based on dtype
@@ -286,6 +331,7 @@ async def deploy_model(model_id: str, req: DeployRequest):
             "source": str(onnx_path),
             "destination": str(dest),
             "filename": dest_name,
+            "updated_at": _latest_file_mtime(target_base),
         }
 
 
@@ -296,12 +342,14 @@ async def compare_models(req: CompareRequest):
     Compare two models by running inference on the same test images.
     Returns paths to result images for side-by-side comparison.
     """
-    import torch
-    import numpy as np
-    from PIL import Image
-    from ml.modnet import MODNet
     import base64
     from io import BytesIO
+
+    import numpy as np
+    import torch
+    from PIL import Image
+
+    from ml.modnet import MODNet
 
     device = settings.get_torch_device()
 
@@ -389,6 +437,7 @@ async def benchmark_models(req: BenchmarkRequest):
     import numpy as np
     import torch
     from PIL import Image
+
     from ml.metrics import evaluate_matting
     from ml.modnet import MODNet
 

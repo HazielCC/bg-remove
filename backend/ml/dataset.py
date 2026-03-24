@@ -9,15 +9,14 @@ Handles:
   - Augmentations: blur, noise, JPEG compression, illumination, resize
 """
 
-import os
 import random
 from pathlib import Path
 
 import numpy as np
 import torch
+from PIL import Image, ImageEnhance, ImageFilter
+from scipy.ndimage import binary_dilation
 from torch.utils.data import Dataset
-from PIL import Image, ImageFilter, ImageEnhance
-from scipy.ndimage import binary_dilation, binary_erosion
 
 
 class MattingDataset(Dataset):
@@ -244,8 +243,7 @@ class HFMattingDataset(MattingDataset):
         Check that a HuggingFace repo actually contains downloadable data.
         Returns a dict with keys: valid, file_count, data_format, message.
         """
-        from huggingface_hub import HfApi, hf_hub_url
-        import requests as _requests
+        from huggingface_hub import HfApi
 
         api = HfApi(token=hf_token)
         try:

@@ -2,7 +2,15 @@ import { LlmInference, FilesetResolver } from '@mediapipe/tasks-genai';
 
 let llmInference: LlmInference | null = null;
 
-self.onmessage = async (event: MessageEvent) => {
+type WorkerMessage =
+  | { type: 'INIT'; payload: { modelPath: string } }
+  | { type: 'GENERATE'; payload: { prompt: string } };
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
   const { type, payload } = event.data;
 
   if (type === 'INIT') {
@@ -21,9 +29,10 @@ self.onmessage = async (event: MessageEvent) => {
         maxTokens: 1024,
       });
       self.postMessage({ type: 'INIT_SUCCESS' });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       console.error("Worker INIT error:", error);
-      self.postMessage({ type: 'ERROR', message: error.message });
+      self.postMessage({ type: 'ERROR', message });
     }
   }
 
@@ -42,9 +51,10 @@ self.onmessage = async (event: MessageEvent) => {
           done: done,
         });
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       console.error("Worker GENERATE error:", error);
-      self.postMessage({ type: 'ERROR', message: error.message });
+      self.postMessage({ type: 'ERROR', message });
     }
   }
 };

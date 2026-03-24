@@ -6,14 +6,11 @@ Provides endpoints to decompose an image into multiple RGBA layers.
 import asyncio
 import base64
 import threading
-import time
 import uuid as _uuid_module
 from io import BytesIO
-from pathlib import Path
-from typing import Optional
 
 import torch
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from PIL import Image, ImageOps
 
 from config import settings
@@ -100,7 +97,7 @@ async def _run_decompose(
     prompt: str,
     layer_num: int,
     num_inference_steps: int,
-    seed: Optional[int],
+    seed: int | None,
 ) -> None:
     """Background task: load model if needed, run inference, store result in _jobs."""
     _jobs[job_id]["status"] = "waiting"
@@ -195,7 +192,7 @@ async def decompose_image(
     prompt: str = Form("A detailed image decomposed into layers"),
     layer_num: int = Form(4, ge=2, le=12),
     num_inference_steps: int = Form(50, ge=1, le=100),
-    seed: Optional[int] = Form(None),
+    seed: int | None = Form(None),
 ):
     """
     Submit a decomposition job. Returns {job_id} immediately.

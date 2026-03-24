@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from PIL import Image
 
 from config import settings

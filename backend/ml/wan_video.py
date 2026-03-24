@@ -1,13 +1,11 @@
-import os
 import uuid
-import torch
-from pathlib import Path
 
+import torch
 from diffusers import DiffusionPipeline
 from diffusers.utils import export_to_video
 
-from ml.hf_downloader import HFModelDownloader
 from config import settings
+from ml.hf_downloader import HFModelDownloader
 
 # Directorio de exportación
 OUTPUT_DIR = settings.export_path / "videos"

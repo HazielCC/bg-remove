@@ -6,6 +6,12 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createSegmenter, type Variant } from './modnet-client';
 
+interface DeployedModel {
+  id: string;
+  name: string;
+  updated_at?: number | null;
+}
+
 export default function RemoveBgPage() {
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
@@ -14,15 +20,22 @@ export default function RemoveBgPage() {
   const [variant, setVariant] = useState<Variant>('auto');
 
   // Model selection
-  const [availableModels, setAvailableModels] = useState<{ id: string, name: string; }[]>([]);
+  const [availableModels, setAvailableModels] = useState<DeployedModel[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('modnet');
 
-  const [modelInfo, setModelInfo] = useState<{ modelId: string; dtype: string; loadTime: string; cached: boolean; } | null>(null);
+  const [modelInfo, setModelInfo] = useState<{
+    modelId: string;
+    dtype: string;
+    loadTime: string;
+    cached: boolean;
+    modelVersion?: number | null;
+  } | null>(null);
   const [inferenceTime, setInferenceTime] = useState<string | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const loadedModelVersionsRef = useRef<Record<string, number | null>>({});
 
   const handleFile = useCallback((f: File) => {
     const url = URL.createObjectURL(f);
@@ -41,30 +54,67 @@ export default function RemoveBgPage() {
     if (f?.type?.startsWith('image/')) handleFile(f);
   }, [handleFile]);
 
-  // Fetch available models on mount
-  useEffect(() => {
-    fetch('/api/models/deployed')
+  const refreshAvailableModels = useCallback(() => {
+    fetch('/api/models/deployed', { cache: 'no-store' })
       .then(res => res.json())
-      .then(data => {
+      .then((data: DeployedModel[]) => {
         setAvailableModels(data);
-        // If default 'modnet' is not in list (unlikely), select first available
-        if (data.length > 0 && !data.some((m: { id: string; }) => m.id === 'modnet')) {
-          setSelectedModel(data[0].id);
-        }
+        setSelectedModel((current) => {
+          if (data.some((m) => m.id === current)) return current;
+          if (data.some((m) => m.id === 'modnet')) return 'modnet';
+          return data[0]?.id ?? 'modnet';
+        });
       })
-      .catch(err => console.error("Failed to fetch models", err));
+      .catch(err => console.error('Failed to fetch models', err));
   }, []);
+
+  useEffect(() => {
+    refreshAvailableModels();
+  }, [refreshAvailableModels]);
+
+  useEffect(() => {
+    const handleFocus = () => refreshAvailableModels();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        refreshAvailableModels();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [refreshAvailableModels]);
 
   async function onRun() {
     if (!file) return;
     setLoading(true);
     setLoadingStep('Cargando modelo...');
-    setLoadingStep('Cargando modelo...');
     try {
+      const selectedModelEntry = availableModels.find((m) => m.id === selectedModel);
       const modelPath = `/models/${selectedModel}`; // e.g. /models/modnet or /models/my-v1
-      const result_seg = await createSegmenter({ variant, modelPath });
+      const loadedVersion = loadedModelVersionsRef.current[modelPath];
+      const shouldReloadModel =
+        loadedVersion != null &&
+        selectedModelEntry?.updated_at != null &&
+        selectedModelEntry.updated_at > loadedVersion;
+
+      const result_seg = await createSegmenter({
+        variant,
+        modelPath,
+        reload: shouldReloadModel,
+      });
       const { segmenter, dtype, modelId, loadTime, cached } = result_seg;
-      setModelInfo({ modelId, dtype, loadTime: loadTime ?? '—', cached });
+      setModelInfo({
+        modelId,
+        dtype,
+        loadTime: loadTime ?? '—',
+        cached,
+        modelVersion: selectedModelEntry?.updated_at ?? null,
+      });
+      loadedModelVersionsRef.current[modelPath] = selectedModelEntry?.updated_at ?? null;
 
       setLoadingStep('Procesando imagen...');
       const raw = await RawImage.fromBlob(file);
@@ -163,6 +213,14 @@ export default function RemoveBgPage() {
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </select>
+              <button
+                type="button"
+                onClick={refreshAvailableModels}
+                className="text-xs text-neutral-400 hover:text-white transition-colors"
+                title="Actualizar modelos desplegados"
+              >
+                Actualizar
+              </button>
             </div>
           )}
 

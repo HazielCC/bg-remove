@@ -13,11 +13,11 @@ Key changes from original:
   - GaussianBlurLayer uses .to(device) instead of .cuda()
 """
 
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
-import math
+from torchvision.models import MobileNet_V2_Weights, mobilenet_v2
 
 
 # ── Gaussian Blur ────────────────────────────────────────

@@ -2,13 +2,23 @@
 
 import os
 from pathlib import Path
-from pydantic_settings import BaseSettings
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Ensure MPS fallback is enabled before torch import
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
+BACKEND_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = BACKEND_ROOT.parent
+
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     # Device
     device: str = "mps"
 
@@ -37,32 +47,46 @@ class Settings(BaseSettings):
     gemini_timeout_seconds: int = 45
     gemini_default_max_images: int = 200
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
+    def _resolve_backend_path(self, value: str) -> Path:
+        """Resolve relative backend paths independently from the launch cwd."""
+        path = Path(value)
+        if not path.is_absolute():
+            path = (BACKEND_ROOT / path).resolve()
+        return path
 
     @property
     def model_path(self) -> Path:
-        p = Path(self.model_dir)
+        p = self._resolve_backend_path(self.model_dir)
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     @property
     def dataset_path(self) -> Path:
-        p = Path(self.dataset_dir)
+        p = self._resolve_backend_path(self.dataset_dir)
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     @property
     def checkpoint_path(self) -> Path:
-        p = Path(self.checkpoint_dir)
+        p = self._resolve_backend_path(self.checkpoint_dir)
         p.mkdir(parents=True, exist_ok=True)
         return p
 
     @property
     def export_path(self) -> Path:
-        p = Path(self.export_dir)
+        p = self._resolve_backend_path(self.export_dir)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def public_models_path(self) -> Path:
+        p = (PROJECT_ROOT / "public" / "models").resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def default_public_model_path(self) -> Path:
+        p = self.public_models_path / "modnet"
         p.mkdir(parents=True, exist_ok=True)
         return p
 

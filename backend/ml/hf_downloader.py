@@ -1,8 +1,6 @@
-import os
-import time
 import threading
+import time
 from pathlib import Path
-from typing import Optional
 
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
@@ -35,7 +33,7 @@ def _safe_dir_size_bytes(root: Path) -> int:
 class HFModelDownloader:
     """Helper unificado para gestionar y monitorear la descarga de modelos pesados de Hugging Face."""
 
-    def __init__(self, model_id: str, local_dir: Optional[str] = None):
+    def __init__(self, model_id: str, local_dir: str | None = None):
         self.model_id = model_id
         self.local_dir = local_dir
         
@@ -223,7 +221,7 @@ class HFModelDownloader:
         def _task():
             try:
                 self._run_download()
-            except Exception as e:
+            except Exception:
                 pass # El error ya fue capturado en _run_download()
 
         self._download_thread = threading.Thread(target=_task)

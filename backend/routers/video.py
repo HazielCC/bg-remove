@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException
 import asyncio
 
+from fastapi import APIRouter, HTTPException
+
 from ml import cogvideo
-from models.schemas_video import VideoGenerateRequest, VideoGenerateResponse, ModelStatusResponse
+from models.schemas_video import ModelStatusResponse, VideoGenerateRequest, VideoGenerateResponse
 
 router = APIRouter()
 

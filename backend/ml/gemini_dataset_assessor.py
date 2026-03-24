@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
-import re
 
 import numpy as np
 from google import genai
 from google.genai import types
 from PIL import Image
-
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
 ASSESSMENT_JSONL = "gemini_assessment.jsonl"

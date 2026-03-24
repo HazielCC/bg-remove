@@ -9,6 +9,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "lint:py": "cd backend && uv run ruff check .",
+    "format:py": "cd backend && uv run ruff format .",
     "setup": "bash scripts/setup_backend.sh"
   },
   "dependencies": {

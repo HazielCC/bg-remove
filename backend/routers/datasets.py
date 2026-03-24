@@ -98,6 +98,7 @@ async def get_suggested_datasets():
 async def validate_dataset(req: ValidateRequest):
     """Check that a HuggingFace dataset has actual downloadable data."""
     import asyncio
+
     from ml.dataset import HFMattingDataset
 
     def _validate():
@@ -138,6 +139,7 @@ async def download_dataset(req: DownloadRequest):
     Returns immediately with a task id; progress can be tracked.
     """
     import asyncio
+
     from ml.dataset import HFMattingDataset
 
     output_dir = settings.dataset_path / req.dataset_name.replace("/", "__")
@@ -240,6 +242,7 @@ async def preview_dataset(dataset_id: str, n: int = Query(8, ge=1, le=50)):
     """Get preview thumbnails (base64) of dataset samples."""
     import base64
     from io import BytesIO
+
     from PIL import Image
 
     ds_path = _resolve_dataset_path(dataset_id)
@@ -300,8 +303,9 @@ async def preview_dataset(dataset_id: str, n: int = Query(8, ge=1, le=50)):
 async def curate_dataset(dataset_id: str, req: CurateRequest):
     """Validate and curate dataset: check alpha range, resolution, broken files."""
     import asyncio
-    from PIL import Image
+
     import numpy as np
+    from PIL import Image
 
     ds_path = _resolve_dataset_path(dataset_id)
     if not ds_path.exists():
@@ -412,8 +416,9 @@ async def curate_dataset(dataset_id: str, req: CurateRequest):
 async def dataset_stats(dataset_id: str):
     """Get statistics about a dataset."""
     import asyncio
-    from PIL import Image
+
     import numpy as np
+    from PIL import Image
 
     ds_path = _resolve_dataset_path(dataset_id)
     if not ds_path.exists():
@@ -458,8 +463,11 @@ async def dataset_stats(dataset_id: str):
 async def start_dataset_assessment(dataset_id: str, req: AssessRequest):
     """Run Gemini-based quality assessment on dataset samples."""
     import asyncio
+
     from ml.gemini_dataset_assessor import (
         GeminiAssessmentConfig,
+    )
+    from ml.gemini_dataset_assessor import (
         assess_dataset_with_gemini as run_gemini_assessment,
     )
 

@@ -17,12 +17,12 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, random_split
-from scipy.ndimage import grey_dilation, grey_erosion
 from PIL import Image
+from scipy.ndimage import grey_dilation, grey_erosion
+from torch.utils.data import DataLoader, Dataset, random_split
 
-from ml.modnet import MODNet, GaussianBlurLayer
 from ml.dataset import MattingDataset
+from ml.modnet import GaussianBlurLayer, MODNet
 
 
 class UnlabeledImageDataset(Dataset):
@@ -122,6 +122,25 @@ training_state = TrainingState()
 training_event_queues: list[asyncio.Queue] = []
 _main_loop: asyncio.AbstractEventLoop | None = None
 _stop_flag = False
+
+
+def _save_model_checkpoint(model: MODNet, path: Path) -> str:
+    """Persist a checkpoint and return its path as a string."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), path)
+    return str(path)
+
+
+def _should_save_periodic_checkpoint(
+    epoch: int, total_epochs: int, save_every: int
+) -> bool:
+    """Save interval checkpoints without duplicating the final `last` snapshot."""
+    return save_every > 0 and epoch % save_every == 0 and epoch != total_epochs
+
+
+def _periodic_checkpoint_path(ckpt_dir: Path, epoch: int, stage: str = "supervised") -> Path:
+    suffix = "" if stage == "supervised" else "_soc"
+    return ckpt_dir / f"epoch_{epoch:03d}{suffix}.ckpt"
 
 
 def get_training_state() -> TrainingState:
@@ -463,11 +482,16 @@ def run_supervised_training(
             if val_loss < training_state.best_val_loss:
                 training_state.best_val_loss = val_loss
                 best_path = ckpt_dir / "best.ckpt"
-                torch.save(model.state_dict(), best_path)
+                _save_model_checkpoint(model, best_path)
+
+            if _should_save_periodic_checkpoint(epoch, config.epochs, config.save_every):
+                ckpt_path = _periodic_checkpoint_path(ckpt_dir, epoch)
+                _save_model_checkpoint(model, ckpt_path)
+                training_state.checkpoints.append(str(ckpt_path))
 
             if epoch == config.epochs:
                 ckpt_path = ckpt_dir / "last.ckpt"
-                torch.save(model.state_dict(), ckpt_path)
+                _save_model_checkpoint(model, ckpt_path)
                 training_state.checkpoints.append(str(ckpt_path))
 
             # Send SSE event
@@ -686,7 +710,11 @@ def run_soc_adaptation(
 
             if epoch == epochs:
                 ckpt_path = ckpt_dir / "last_soc.ckpt"
-                torch.save(model.state_dict(), ckpt_path)
+                _save_model_checkpoint(model, ckpt_path)
+                training_state.checkpoints.append(str(ckpt_path))
+            elif _should_save_periodic_checkpoint(epoch, epochs, config.save_every):
+                ckpt_path = _periodic_checkpoint_path(ckpt_dir, epoch, stage="soc")
+                _save_model_checkpoint(model, ckpt_path)
                 training_state.checkpoints.append(str(ckpt_path))
 
             print(f"[SOC epoch {epoch}/{epochs}] loss={avg_loss:.4f}")

@@ -63,6 +63,7 @@ export default function ExportPage() {
                 { img_size: exportSize, path: selectedCkpt }
             );
             addLog(`Exported: ${result.path} (${result.size_mb} MB)`);
+            addLog("Export finished in backend/exports only. Use Deploy or Quick Deploy to make it appear in /remove-bg.");
             fetchModels();
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : String(e);
@@ -119,10 +120,9 @@ export default function ExportPage() {
 
             const destLabel = result.id ? `public/models/${result.id}` : `public/models/modnet/onnx`;
             addLog(
-                `Deployed! ${result.filename} → ${destLabel}`
+                `Deployed! ${result.filename ?? "model file"} → ${destLabel}`
             );
-            addLog("Now available in the Model Tester (Probador).");
-            addLog("Restart the dev server to pick up the new model.");
+            addLog("Now available in /remove-bg. If that page was already open, refresh its model list or revisit it.");
         } catch (e) {
             addLog(`ERROR: ${(e as Error).message}`);
         } finally {
@@ -170,7 +170,7 @@ export default function ExportPage() {
                 }
             );
 
-            addLog("✅ Deployment Complete! Restart dev server to use.");
+            addLog("✅ Deployment Complete! Open /remove-bg and refresh the model list if it was already open.");
             fetchModels();
         } catch (e) {
             addLog(`ERROR: ${(e as Error).message}`);

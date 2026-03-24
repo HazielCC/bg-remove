@@ -14,6 +14,37 @@ interface CacheItem {
 
 const CACHE: Partial<Record<string, CacheItem>> = {};
 
+function clearMemoryCacheForModel(modelPath: string) {
+  for (const cacheKey of Object.keys(CACHE)) {
+    if (cacheKey.startsWith(`${modelPath}:`)) {
+      delete CACHE[cacheKey];
+    }
+  }
+}
+
+async function clearBrowserCacheForModel(modelPath: string) {
+  if (typeof window === 'undefined' || typeof caches === 'undefined') {
+    return;
+  }
+
+  try {
+    const cache = await caches.open('transformers-cache');
+    const keys = await cache.keys();
+    const targetPath = new URL(modelPath, window.location.origin).pathname.replace(/\/$/, '');
+
+    await Promise.all(
+      keys.map(async (request) => {
+        const requestPath = new URL(request.url).pathname.replace(/\/$/, '');
+        if (requestPath === targetPath || requestPath.startsWith(`${targetPath}/`)) {
+          await cache.delete(request);
+        }
+      }),
+    );
+  } catch (error) {
+    console.warn(`[MODNet] Unable to clear browser cache for ${modelPath}`, error);
+  }
+}
+
 async function detectModelDtype(variant: Variant): Promise<ModelDType> {
   if (variant === 'fp32') return 'fp32';
   if (variant === 'fp16') return 'fp16';
@@ -29,7 +60,11 @@ function buildDtypeCandidates(dtype: ModelDType): ModelDType[] {
   return [dtype];
 }
 
-export async function createSegmenter(options?: { variant?: Variant; modelPath?: string }) {
+export async function createSegmenter(options?: {
+  variant?: Variant;
+  modelPath?: string;
+  reload?: boolean;
+}) {
   const variant = options?.variant ?? 'auto';
   const requestedDtype = await detectModelDtype(variant);
   const dtypeCandidates = buildDtypeCandidates(requestedDtype);
@@ -37,6 +72,12 @@ export async function createSegmenter(options?: { variant?: Variant; modelPath?:
   const modelCandidates = options?.modelPath 
     ? [options.modelPath] 
     : ['/models/modnet', 'Xenova/modnet'];
+
+  if (options?.reload && options.modelPath) {
+    console.log(`[MODNet] Reload requested for ${options.modelPath}`);
+    clearMemoryCacheForModel(options.modelPath);
+    await clearBrowserCacheForModel(options.modelPath);
+  }
 
   for (const modelId of modelCandidates) {
     for (const dtype of dtypeCandidates) {
@@ -72,4 +113,3 @@ export async function createSegmenter(options?: { variant?: Variant; modelPath?:
     ? lastError
     : new Error('Failed to load MODNet pipeline with all dtype/model fallbacks');
 }
-

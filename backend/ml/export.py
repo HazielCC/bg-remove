@@ -9,8 +9,8 @@ Supports:
 
 from pathlib import Path
 
-import torch
 import onnx
+import torch
 
 from ml.modnet import MODNet, MODNetInference
 
@@ -102,7 +102,7 @@ def quantize_uint8(input_onnx: str, output_onnx: str) -> str:
     Returns:
         Path to quantized model.
     """
-    from onnxruntime.quantization import quantize_dynamic, QuantType
+    from onnxruntime.quantization import QuantType, quantize_dynamic
 
     out = Path(output_onnx)
     out.parent.mkdir(parents=True, exist_ok=True)

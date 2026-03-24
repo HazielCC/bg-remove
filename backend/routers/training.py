@@ -12,21 +12,21 @@ Endpoints:
 
 import asyncio
 import json
-from typing import Literal
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, model_validator
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field, model_validator
 
 from config import settings
 from ml.trainer import (
     TrainingConfig,
     get_training_state,
-    run_supervised_training,
     run_soc_adaptation,
+    run_supervised_training,
     stop_training,
 )
 
@@ -457,7 +457,7 @@ async def stream_metrics():
                     # Stop streaming on terminal events
                     if event.get("type") in ("finished", "error", "stopped"):
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send heartbeat
                     state = get_training_state()
                     yield f"data: {json.dumps({'type': 'heartbeat', 'status': state.status, 'epoch': state.current_epoch})}\n\n"

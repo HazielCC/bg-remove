@@ -1,6 +1,5 @@
 """FastAPI application for MODNet fine-tuning backend."""
 
-import os
 import torch
 
 try:
@@ -8,10 +7,11 @@ try:
 except RuntimeError:
     pass
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
 
 from config import settings
 
@@ -48,7 +48,7 @@ app.add_middleware(
 )
 
 # ── routers ──────────────────────────────────────────────
-from routers import datasets, training, models, inference, layered, video  # noqa: E402
+from routers import datasets, inference, layered, models, training, video  # noqa: E402
 
 app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
 app.include_router(training.router, prefix="/api/training", tags=["training"])
