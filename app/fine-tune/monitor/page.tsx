@@ -114,6 +114,7 @@ export default function MonitorPage() {
     );
     const [logs, setLogs] = useState<string[]>([]);
     const [connected, setConnected] = useState(false);
+    const [stopRequested, setStopRequested] = useState(false);
     const sourceRef = useRef<EventSource | null>(null);
     const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -214,6 +215,7 @@ export default function MonitorPage() {
 
                 if (type === "finished") {
                     setBatchProgress(null);
+                    setStopRequested(false);
                     appendLog(`Training finished! Best val loss: ${data.best_val_loss}`);
                     setStatus((prev) => ({
                         ...(prev ?? makeEmptyStatus()),
@@ -224,6 +226,7 @@ export default function MonitorPage() {
 
                 if (type === "error") {
                     setBatchProgress(null);
+                    setStopRequested(false);
                     appendLog(`ERROR: ${data.message}`);
                     setStatus((prev) => ({
                         ...(prev ?? makeEmptyStatus()),
@@ -235,6 +238,7 @@ export default function MonitorPage() {
 
                 if (type === "stopped") {
                     setBatchProgress(null);
+                    setStopRequested(false);
                     appendLog("Training stopped by user");
                     setStatus((prev) => ({
                         ...(prev ?? makeEmptyStatus()),
@@ -274,11 +278,34 @@ export default function MonitorPage() {
 
     // Stop training
     const handleStop = async () => {
+        if (status?.status !== "running" || stopRequested) {
+            appendLog("No hay entrenamiento activo para detener.");
+            return;
+        }
+
+        setStopRequested(true);
         try {
             await apiPost("/training/stop", {});
             appendLog("Stop requested...");
+            setStatus((prev) => ({
+                ...(prev ?? makeEmptyStatus()),
+                status: "stopping",
+            }));
         } catch (e) {
-            console.error(e);
+            const message = e instanceof Error ? e.message : String(e);
+            if (message.includes("No training in progress")) {
+                appendLog("El entrenamiento ya había terminado o se detuvo antes de procesar la solicitud.");
+                setStatus((prev) => ({
+                    ...(prev ?? makeEmptyStatus()),
+                    status: "idle",
+                }));
+                return;
+            }
+            appendLog(`ERROR: stop failed: ${message}`);
+        } finally {
+            if (status?.status !== "running") {
+                setStopRequested(false);
+            }
         }
     };
 
@@ -360,9 +387,10 @@ export default function MonitorPage() {
                     </button>
                     <button
                         onClick={handleStop}
-                        className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm"
+                        disabled={status?.status !== "running" || stopRequested}
+                        className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm disabled:opacity-50"
                     >
-                        Stop
+                        {stopRequested ? "Stopping..." : "Stop"}
                     </button>
                 </div>
             </div>
