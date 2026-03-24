@@ -5,6 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 import { apiDelete, apiFetch, apiPost } from "../lib/api";
 import HelpTip from "../components/help-tip";
 
+const BACKEND_ORIGIN =
+    process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
+const DATASETS_API_BASE = `${BACKEND_ORIGIN}/api/datasets`;
+
 // ── Types ───────────────────────────────────────────────
 interface DatasetInfo {
     id: string;
@@ -193,15 +197,22 @@ export default function DatasetsPage() {
         // Step 2: download
         setDownloading(datasetName);
         try {
-            const result = await apiPost<{ status: string; images_count?: number; alphas_count?: number; detail?: string }>(
-                "/datasets/download",
-                {
+            const res = await fetch(`${DATASETS_API_BASE}/download`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
                     dataset_name: datasetName,
                     split: "train",
                     max_samples: downloadMax || null,
                     offset: downloadOffset,
-                }
-            );
+                }),
+            });
+            const result = await res.json();
+            if (!res.ok) {
+                throw new Error(result.detail || `HTTP ${res.status}`);
+            }
             if (result.status === "already_exists") {
                 setDownloadError("El dataset ya existe localmente. Elimínalo primero para re-descargarlo.");
             } else {

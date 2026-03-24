@@ -2,6 +2,10 @@
 
 import { useState, useEffect } from "react";
 
+const BACKEND_ORIGIN =
+  process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
+const VIDEO_API_BASE = `${BACKEND_ORIGIN}/api/video`;
+
 interface ModelStatus {
   is_downloaded: boolean;
   is_downloading: boolean;
@@ -24,7 +28,7 @@ export default function VideoTestPage() {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch("/api/video/model-status");
+      const res = await fetch(`${VIDEO_API_BASE}/model-status`);
       if (res.ok) {
         const data = await res.json();
         setModelStatus(data);
@@ -46,7 +50,7 @@ export default function VideoTestPage() {
 
   const triggerDownload = async () => {
     try {
-      await fetch("/api/video/download-model", { method: "POST" });
+      await fetch(`${VIDEO_API_BASE}/download-model`, { method: "POST" });
       fetchStatus();
     } catch (err) {
       console.error("Error iniciando descarga", err);
@@ -61,7 +65,7 @@ export default function VideoTestPage() {
     setVideo(null);
 
     try {
-      const res = await fetch("/api/video/generate", {
+      const res = await fetch(`${VIDEO_API_BASE}/generate`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -75,7 +79,7 @@ export default function VideoTestPage() {
       }
 
       const data = await res.json();
-      setVideo(`http://localhost:8000${data.video_url}`);
+      setVideo(`${BACKEND_ORIGIN}${data.video_url}`);
     } catch (err) {
       if (err instanceof Error) {
         setError(err.message);
