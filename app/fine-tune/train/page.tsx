@@ -60,7 +60,7 @@ export default function TrainPage() {
         soc_epochs: 10,
         train_split: 0.8,
         val_split: 0.1,
-        save_every: 5,
+        save_every: 0,
         backgrounds_dir: "",
     });
 

@@ -83,7 +83,7 @@ class TrainRequest(BaseModel):
     backgrounds_dir: str | None = None
 
     # Checkpointing
-    save_every: int = Field(5, ge=1)
+    save_every: int = Field(0, ge=0)
 
     @model_validator(mode="after")
     def validate_split_sum(self):
@@ -157,7 +157,7 @@ def _recommend_supervised_config(stats: dict) -> tuple[dict, list[str]]:
         "matte_loss_weight": 1.0,
         "train_split": 0.8,
         "val_split": 0.1,
-        "save_every": 5,
+        "save_every": 0,
     }
 
     if n < 300:
@@ -218,7 +218,7 @@ def _recommend_soc_config(has_pretrained: bool, stats: dict) -> tuple[dict, list
         "soc_lr": 0.00001,
         "batch_size": 1,
         "img_size": 512,
-        "save_every": 2,
+        "save_every": 0,
     }
 
     if n >= 2000:

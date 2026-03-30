@@ -55,8 +55,10 @@ async function detectModelDtype(variant: Variant): Promise<ModelDType> {
 }
 
 function buildDtypeCandidates(dtype: ModelDType): ModelDType[] {
-  if (dtype === 'q8') return ['q8', 'uint8'];
-  if (dtype === 'uint8') return ['uint8', 'q8'];
+  if (dtype === 'q8') return ['q8', 'uint8', 'fp16', 'fp32'];
+  if (dtype === 'uint8') return ['uint8', 'q8', 'fp16', 'fp32'];
+  if (dtype === 'fp16') return ['fp16', 'fp32', 'q8', 'uint8'];
+  if (dtype === 'fp32') return ['fp32', 'fp16', 'q8', 'uint8'];
   return [dtype];
 }
 
